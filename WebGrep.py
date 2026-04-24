@@ -324,13 +324,73 @@ def process_link(link, index, total, lock):
         print(f"正在处理第 {index}/{total} 个链接: {link}")
     return extract_news_content(link)
 
+def find_webarchive_files(directory):
+    """遍历目录，查找所有.webarchive文件"""
+    webarchive_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith('.webarchive'):
+                webarchive_files.append(os.path.join(root, file))
+    return webarchive_files
+
+def show_help():
+    """显示帮助信息"""
+    help_text = """
+WebGrep - 从webarchive文件中提取新闻内容
+
+使用方法:
+  python WebGrep.py <文件1> [文件2] [文件3] ...
+  python WebGrep.py --dir <目录>
+  python WebGrep.py --help
+
+参数说明:
+  <文件1> [文件2] [文件3] ...  指定一个或多个webarchive文件
+  --dir <目录>                  指定包含webarchive文件的目录，脚本会自动遍历该目录及其子目录中的所有.webarchive文件
+  --help                        显示此帮助信息
+
+示例:
+  python WebGrep.py web1.webarchive web2.webarchive web3.webarchive
+  python WebGrep.py --dir /path/to/webarchives
+  python WebGrep.py --help
+
+功能说明:
+  - 从webarchive文件中提取新闻文章链接
+  - 自动过滤掉非新闻链接（如图片、CSS、JS等资源）
+  - 从新闻链接中提取标题、时间和正文内容
+  - 支持多线程处理，提高效率
+  - 结果保存到work目录下的文本文件中
+"""
+    print(help_text)
+
 def main():
-    if len(sys.argv) < 2:
-        print("使用方法: python WebGrep.py <文件1> [文件2] [文件3] ...")
-        print("示例: python WebGrep.py web1.webarchive web2.webarchive web3.webarchive")
+    # 检查是否显示帮助信息
+    if len(sys.argv) >= 2 and sys.argv[1] in ['--help', '-h', '/h', '/?']:
+        show_help()
         return
 
-    input_files = sys.argv[1:]
+    if len(sys.argv) < 2:
+        print("使用方法: python WebGrep.py <文件1> [文件2] [文件3] ...")
+        print("       或: python WebGrep.py --dir <目录>")
+        print("       或: python WebGrep.py --help")
+        print("示例: python WebGrep.py web1.webarchive web2.webarchive web3.webarchive")
+        print("      : python WebGrep.py --dir /path/to/webarchives")
+        print("      : python WebGrep.py --help")
+        return
+
+    input_files = []
+    # 检查是否使用--dir参数
+    if sys.argv[1] == '--dir' and len(sys.argv) >= 3:
+        directory = sys.argv[2]
+        if not os.path.isdir(directory):
+            print(f"错误: 目录 '{directory}' 不存在或不是一个目录")
+            return
+        input_files = find_webarchive_files(directory)
+        if not input_files:
+            print(f"在目录 '{directory}' 中未找到任何.webarchive文件")
+            return
+        print(f"在目录 '{directory}' 中找到 {len(input_files)} 个.webarchive文件")
+    else:
+        input_files = sys.argv[1:]
 
     # 检查所有文件是否存在
     for input_file in input_files:
