@@ -1,0 +1,15 @@
+Good:
+https://www.autor.com.cn
+https://auto.ithome.com
+https://auto.gasgoo.com/industry/C-108
+
+
+Not Good:
+https://www.autonews.com/news/
+https://techcrunch.com/category/transportation/
+
+
+
+如何通过Agent为WebGrep增加一个新的网站？
+Prompot：
+这个脚本需要遵循之前的抓取新闻的逻辑，要能够拓展到一个新的网站，这个网站的内容我保存在了work/gasgoo-new-tech.v00260406.webarchive 这个文件中，你解析一下这个webarchive，对我们的脚本进行优化，确保我们的脚本可以对这个网站的新闻按照之前的要求一样进行有效的抓取
