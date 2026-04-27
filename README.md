@@ -5,6 +5,10 @@ https://www.autor.com.cn
 
 把需要加载的内容都加载到页面，然后通过Safari保存网页归档，将两个网页保存为webarchive文件。
 
+（https://auto.gasgoo.com，这个网站需要手动点击到资讯那个栏目中，然后再保存网页内容)
+
+
+
 # 第二步： 抓取新闻
 python WebGrep.v00@260406.py ithome.webarchive autor.webarchive
 这里的WebGrep脚本通过webarchive网页归档文件，抓取这些网页中的新闻，并且输出到news_output_date_time.txt中
