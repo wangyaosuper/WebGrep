@@ -357,6 +357,7 @@ def extract_news_content(url):
                             if nav_count == 0:
                                 title = title_text
                                 break
+
             # 如果没有找到标题，尝试其他选择器
             if not title:
                 title_selectors = ['.article-title', '.news-title', '.title', 'h2']
@@ -389,6 +390,10 @@ def extract_news_content(url):
                             break
                         else:
                             title = None
+
+            # 对于autohome网站，如果标题为空或未知，则跳过这条新闻
+            if not title or title == "未知标题":
+                return None
         elif is_gasgoo:
             # gasgoo网站使用h1标签作为标题
             title_elem = soup.find('h1')
@@ -497,13 +502,52 @@ def extract_news_content(url):
                         nav_keywords = ['登录', '注册', '发布作品', '找论坛', '下载App', 
                                       '小程序', '移动App', '触屏版', 'i车商', '本地服务',
                                       '选择城市', '搜索', '点赞', '评论', '收藏', '分享',
-                                      '所有标签', '试试其他标签', '商业模式', '新车预告']
-                        nav_count = sum(1 for keyword in nav_keywords if keyword in content)
-                        # 如果导航关键词太多，说明抓取到了导航内容而非正文
-                        if nav_count < 5:  # 导航关键词少于5个才认为是有效内容
+                                      '所有标签', '试试其他标签', '商业模式', '新车预告',
+                                      '当前位置', '首页', '车闻中心', '人物对话', '正文',
+                                      '关注', '原创', '浏览', '全部车系', '全部地区',
+                                      '全部主题', '摩托车论坛', '资讯文章', '最新', '车闻',
+                                      '导购', '试驾评测', '用车', '文化', '游记', '技术',
+                                      '改装赛事', '新能源', '行业', '全部', '行业动态',
+                                      '热点追踪', '车闻轶事', '国产新车', '进口新车',
+                                      '召回碰撞', '市场分析', '用户调研', '高端对话',
+                                      '零部件', '智能网联', '行业政策', '整车', '后市场',
+                                      '热门文章', '精彩分类', '编辑博客', '合作媒体报道']
+
+                        # 增加底部推荐内容的过滤关键词
+                        footer_keywords = [
+                            '文章标签', '向编辑', '询底价',
+                            '作者其他作品',
+                            '进入主页', '相关视频', '论坛推荐',
+                            '大家都在问', '扫码下载汽车之家App',
+                            '京公网安备', '京ICP备', '信息网络传播视听节目许可证',
+                            '广播电视节目制作经营许可证', '中央网信办',
+                            '违法和不良信息举报中心', '举报电话', '举报邮箱', '隐私协议',
+                            '营业执照',  '万 播放'
+                        ]
+
+                        # 先清理导航文本
+                        # 进一步清理内容，移除导航相关的行
+                        lines = content.split('\n')
+                        filtered_lines = []
+                        # 查找正文结束的位置（遇到第一个底部关键词就停止）
+                        found_footer = False
+                        for line in lines:
+                            # 检查是否包含底部推荐内容的关键词
+                            if any(keyword in line for keyword in footer_keywords):
+                                found_footer = True
+                                break
+                            # 跳过包含导航关键词的行
+                            if not any(keyword in line for keyword in nav_keywords):
+                                filtered_lines.append(line)
+
+                        content = '\n'.join(filtered_lines).strip()
+                        # 如果内容太短，说明过滤掉了太多，可能不是有效内容
+                        if len(content) > 50:
                             break
                         else:
                             content = None
+                    else:
+                        content = None
         elif is_gasgoo:
             # gasgoo网站的内容在#ArticleContent或.contentDetailed中
             content_elem = soup.select_one('#ArticleContent') or soup.select_one('.contentDetailed')
@@ -566,11 +610,14 @@ def save_news_to_file(news_list, output_file):
     """将新闻内容保存到文件中"""
     with open(output_file, 'w', encoding='utf-8') as f:
         for i, news in enumerate(news_list, 1):
+            # 跳过None值的新闻
+            if news is None:
+                continue
             f.write(f"===== 新闻 {i} =====\n")
-            f.write(f"标题: {news['title']}\n")
-            f.write(f"时间: {news['time']}\n")
-            f.write(f"链接: {news['url']}\n")
-            f.write(f"内容:\n{news['content']}\n")
+            f.write(f"标题: {news.get('title', '未知标题')}\n")
+            f.write(f"时间: {news.get('time', '未知时间')}\n")
+            f.write(f"链接: {news.get('url', '未知链接')}\n")
+            f.write(f"内容:\n{news.get('content', '无内容')}\n")
             f.write("\n" + "="*50 + "\n\n")
 
 def process_link(link, index, total, lock):
