@@ -30,6 +30,95 @@ def extract_links_from_file(filename):
 
         return list(set(links))  # 去重
 
+def extract_news_from_autohome_list(html_content):
+    """从autohome新闻列表页提取新闻信息"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    news_list = []
+
+    # 查找所有包含h2标签的li元素
+    all_li = soup.find_all('li')
+    news_items = [li for li in all_li if li.find('h2')]
+
+    # 使用集合来去重
+    seen_urls = set()
+
+    # 定义需要排除的标题关键词
+    excluded_title_keywords = [
+        '发布作品', '找论坛', '登录', '注册', '更多',
+        '移动App', '触屏版', '小程序', 'i车商', '本地服务',
+        '下载App', '选择城市', '搜索', '点赞', '评论',
+        '收藏', '分享', '问编辑', '当前位置', '首页',
+        '车闻中心', '人物对话', '正文', '关注', '原创',
+        '浏览', '所有标签', '试试其他标签', '商业模式',
+        '新车预告', '整车', '企业/品牌事件', '海外售价',
+        '生产研发', '企业财报', '企业营收', '配置/售价调整',
+        '行业视角'
+    ]
+
+    for item in news_items:
+        try:
+            # 查找h2标签中的链接（这是新闻标题链接）
+            h2_tag = item.find('h2')
+            if not h2_tag:
+                continue
+
+            link_tag = h2_tag.find('a', href=True)
+            if not link_tag:
+                continue
+
+            url = link_tag['href']
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif not url.startswith('http'):
+                continue
+
+            # 检查URL是否符合autohome新闻链接的模式
+            # 应该是 /news/年月/数字.html 的格式
+            if not re.search(r'/news/\d{6}/\d+\.html', url):
+                continue
+
+            # 去重
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            # 提取标题
+            title = link_tag.get_text().strip()
+
+            # 检查标题是否包含排除的关键词
+            if any(keyword in title for keyword in excluded_title_keywords):
+                continue
+
+            # 检查标题长度，太短的可能是导航或功能按钮
+            if len(title) < 10:
+                continue
+
+            # 查找摘要（在p标签中）
+            summary = ""
+            p_tag = item.find('p')
+            if p_tag:
+                summary = p_tag.get_text().strip()
+
+            # 查找时间（通常在p标签中包含日期）
+            news_time = "未知时间"
+            if p_tag:
+                # 尝试从摘要中提取日期
+                date_match = re.search(r'(\d{4}年\d{1,2}月\d{1,2}日)', summary)
+                if date_match:
+                    news_time = date_match.group(1)
+
+            news_list.append({
+                'title': title or "未知标题",
+                'time': news_time,
+                'url': url,
+                'content': summary or "无摘要"
+            })
+        except Exception as e:
+            print(f"提取新闻时出错: {str(e)}")
+            continue
+
+    return news_list
+
 def is_news_link(url):
     """判断URL是否是新闻文章链接"""
     url_lower = url.lower()
@@ -83,6 +172,20 @@ def is_news_link(url):
     if url_lower.endswith('/') or re.search(r'https?://[^/]+/?$', url_lower):
         return False
 
+    # 针对autohome网站的特殊处理
+    if 'autohome.com.cn' in url_lower:
+        # autohome的新闻链接模式：/news/年月/数字.html
+        # 例如：/news/202604/1314001.html
+        if re.search(r'/news/\d{6}/\d+\.html', url_lower):
+            return True
+        # 排除其他autohome链接（如分类页、列表页等）
+        # 例如：/news/1/、/news/2/、/51/0/1/conjunction.html等
+        if re.search(r'/news/\d+/?$', url_lower) or re.search(r'/\d+/\d+/\d+/', url_lower):
+            return False
+        # 排除包含特定路径的autohome链接
+        if any(path in url_lower for path in ['/bestauto/', '/chejiahao/', '/v.', '/hangye/list/']):
+            return False
+
     # 只保留看起来像新闻文章的链接
     # 新闻链接通常包含数字或特定的路径模式
     # 检查URL是否包含数字，这通常是新闻文章的特征
@@ -105,11 +208,17 @@ def extract_links_from_webarchive(filename):
             plist = plistlib.load(f)
 
         links = []
+        is_autohome_list = False
 
         # 获取主URL
         if 'WebMainResource' in plist:
             if 'WebResourceURL' in plist['WebMainResource']:
-                links.append(plist['WebMainResource']['WebResourceURL'])
+                main_url = plist['WebMainResource']['WebResourceURL']
+                links.append(main_url)
+
+                # 检查是否是autohome新闻列表页
+                if 'autohome.com.cn/news/' in main_url:
+                    is_autohome_list = True
 
         # 获取子资源中的URL
         if 'WebSubresources' in plist:
@@ -131,22 +240,51 @@ def extract_links_from_webarchive(filename):
                         except UnicodeDecodeError:
                             html_content = data.decode('latin-1')
 
-                    # 使用BeautifulSoup解析HTML并提取所有链接
-                    soup = BeautifulSoup(html_content, 'html.parser')
-                    for a_tag in soup.find_all('a', href=True):
-                        href = a_tag['href']
-                        # 处理不同类型的链接
-                        if href.startswith('http'):
-                            links.append(href)
-                        elif href.startswith('//'):
-                            # 处理以//开头的协议相对链接
-                            links.append('https:' + href)
-                        elif href.startswith('/') and not href.startswith('//'):
-                            # 处理以/开头的绝对路径链接
-                            base_url = plist['WebMainResource']['WebResourceURL']
-                            parsed = base_url.split('/')
-                            if len(parsed) >= 3:
-                                links.append(f"{parsed[0]}//{parsed[2]}{href}")
+                    # 如果是autohome新闻列表页，直接提取新闻信息
+                    if is_autohome_list:
+                        print("检测到autohome新闻列表页，直接提取新闻信息...")
+                        news_list = extract_news_from_autohome_list(html_content)
+                        if news_list:
+                            # 将新闻信息保存到work目录
+                            work_dir = "work"
+                            if not os.path.exists(work_dir):
+                                os.makedirs(work_dir)
+                            output_file = os.path.join(work_dir, f"autohome_news_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+                            save_news_to_file(news_list, output_file)
+                            print(f"已从autohome新闻列表页提取 {len(news_list)} 条新闻并保存到 {output_file}")
+                        # 同时也提取链接，保持原有功能
+                        soup = BeautifulSoup(html_content, 'html.parser')
+                        for a_tag in soup.find_all('a', href=True):
+                            href = a_tag['href']
+                            # 处理不同类型的链接
+                            if href.startswith('http'):
+                                links.append(href)
+                            elif href.startswith('//'):
+                                # 处理以//开头的协议相对链接
+                                links.append('https:' + href)
+                            elif href.startswith('/') and not href.startswith('//'):
+                                # 处理以/开头的绝对路径链接
+                                base_url = plist['WebMainResource']['WebResourceURL']
+                                parsed = base_url.split('/')
+                                if len(parsed) >= 3:
+                                    links.append(f"{parsed[0]}//{parsed[2]}{href}")
+                    else:
+                        # 非autohome新闻列表页，使用原有逻辑
+                        soup = BeautifulSoup(html_content, 'html.parser')
+                        for a_tag in soup.find_all('a', href=True):
+                            href = a_tag['href']
+                            # 处理不同类型的链接
+                            if href.startswith('http'):
+                                links.append(href)
+                            elif href.startswith('//'):
+                                # 处理以//开头的协议相对链接
+                                links.append('https:' + href)
+                            elif href.startswith('/') and not href.startswith('//'):
+                                # 处理以/开头的绝对路径链接
+                                base_url = plist['WebMainResource']['WebResourceURL']
+                                parsed = base_url.split('/')
+                                if len(parsed) >= 3:
+                                    links.append(f"{parsed[0]}//{parsed[2]}{href}")
             except Exception as e:
                 print(f"解析HTML内容时出错: {str(e)}")
 
@@ -172,9 +310,86 @@ def extract_news_content(url):
         # 检查是否是gasgoo网站
         is_gasgoo = 'gasgoo.com' in url.lower()
 
+        # 检查是否是autohome网站
+        is_autohome = 'autohome.com.cn' in url.lower()
+
         # 尝试提取标题
         title = None
-        if is_gasgoo:
+        if is_autohome:
+            # autohome网站的标题提取逻辑
+            # 首先尝试从meta标签中提取标题
+            meta_title = soup.find('meta', property='og:title')
+            if meta_title and meta_title.get('content'):
+                title = meta_title['content'].strip()
+
+            # 如果没有从meta标签获取到标题，尝试从h1标签提取
+            if not title:
+                h1_tags = soup.find_all('h1')
+                if h1_tags:
+                    # 过滤掉明显不是新闻标题的元素
+                    for h1_tag in h1_tags:
+                        title_text = h1_tag.get_text().strip()
+                        # 跳过明显不是新闻标题的元素
+                        # 增加更多过滤关键词，包括导航、功能按钮等非新闻内容
+                        excluded_keywords = [
+                            '发布作品', '找论坛', '数据分析', '新车上市/价格',
+                            '登录', '注册', '更多', '移动App', '触屏版',
+                            '小程序', 'i车商', '本地服务', '下载App',
+                            '选择城市', '搜索', '点赞', '评论', '收藏',
+                            '分享', '问编辑', '当前位置', '首页', '车闻中心',
+                            '人物对话', '正文', '关注', '原创', '浏览',
+                            '所有标签', '试试其他标签', '商业模式', '新车预告',
+                            '整车', '企业/品牌事件', '海外售价', '生产研发',
+                            '企业财报', '企业营收', '配置/售价调整', '行业视角',
+                            '全部车系', '全部地区', '全部主题', '摩托车论坛',
+                            '资讯文章', '最新', '车闻', '导购', '试驾评测',
+                            '用车', '文化', '游记', '技术', '改装赛事',
+                            '新能源', '行业', '全部', '行业动态', '热点追踪',
+                            '车闻轶事', '国产新车', '进口新车', '召回碰撞',
+                            '市场分析', '用户调研', '高端对话', '零部件',
+                            '智能网联', '行业政策', '整车', '新能源', '后市场',
+                            '热门文章', '精彩分类', '编辑博客', '合作媒体报道'
+                        ]
+                        # 检查标题是否包含排除的关键词
+                        if title_text and len(title_text) > 10 and not any(keyword in title_text for keyword in excluded_keywords):
+                            # 额外检查：如果标题包含多个排除关键词，说明是导航内容
+                            nav_count = sum(1 for keyword in excluded_keywords if keyword in title_text)
+                            if nav_count == 0:
+                                title = title_text
+                                break
+            # 如果没有找到标题，尝试其他选择器
+            if not title:
+                title_selectors = ['.article-title', '.news-title', '.title', 'h2']
+                for selector in title_selectors:
+                    title_elem = soup.select_one(selector)
+                    if title_elem:
+                        title_text = title_elem.get_text().strip()
+                        # 再次检查标题是否包含排除的关键词
+                        excluded_keywords = [
+                            '发布作品', '找论坛', '登录', '注册', '更多',
+                            '移动App', '触屏版', '小程序', 'i车商', '本地服务',
+                            '下载App', '选择城市', '搜索', '点赞', '评论',
+                            '收藏', '分享', '问编辑', '当前位置', '首页',
+                            '车闻中心', '人物对话', '正文', '关注', '原创',
+                            '浏览', '所有标签', '试试其他标签', '商业模式',
+                            '新车预告', '整车', '企业/品牌事件', '海外售价',
+                            '生产研发', '企业财报', '企业营收', '配置/售价调整',
+                            '行业视角', '全部车系', '全部地区', '全部主题',
+                            '摩托车论坛', '资讯文章', '最新', '车闻', '导购',
+                            '试驾评测', '用车', '文化', '游记', '技术',
+                            '改装赛事', '新能源', '行业', '全部', '行业动态',
+                            '热点追踪', '车闻轶事', '国产新车', '进口新车',
+                            '召回碰撞', '市场分析', '用户调研', '高端对话',
+                            '零部件', '智能网联', '行业政策', '整车',
+                            '新能源', '后市场', '热门文章', '精彩分类',
+                            '编辑博客', '合作媒体报道'
+                        ]
+                        if title_text and len(title_text) > 5 and not any(keyword in title_text for keyword in excluded_keywords):
+                            title = title_text
+                            break
+                        else:
+                            title = None
+        elif is_gasgoo:
             # gasgoo网站使用h1标签作为标题
             title_elem = soup.find('h1')
             if title_elem:
@@ -226,7 +441,19 @@ def extract_news_content(url):
                 break
 
         news_time = "未知时间"
-        if is_gasgoo:
+        if is_autohome:
+            # autohome网站的时间提取逻辑
+            # 查找包含日期的元素
+            date_pattern = r'\d{4}-\d{2}-\d{2}'
+            for elem in soup.find_all(string=re.compile(date_pattern)):
+                parent = elem.parent
+                if parent:
+                    # 检查是否是文章发布时间
+                    parent_text = parent.get_text().strip()
+                    if re.search(date_pattern, parent_text):
+                        news_time = parent_text.strip()
+                        break
+        elif is_gasgoo:
             # gasgoo网站的时间在.userInfo div中的span标签里
             user_info = soup.find('div', class_='userInfo')
             if user_info:
@@ -249,7 +476,35 @@ def extract_news_content(url):
 
         # 尝试提取正文内容
         content = None
-        if is_gasgoo:
+        if is_autohome:
+            # autohome网站的内容提取逻辑
+            # 查找文章内容区域
+            content_selectors = [
+                '#articlewrap', '.article-content', '#content',
+                '.content', '.article-body', '#article-content',
+                '.article-text', '.news-content', '#article-text'
+            ]
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    # 移除脚本和样式标签
+                    for script in content_elem(["script", "style"]):
+                        script.extract()
+                    content = content_elem.get_text(separator='\n').strip()
+                    # 验证内容有效性
+                    if content and len(content) > 100:
+                        # 检查内容是否包含大量导航文本（非新闻内容）
+                        nav_keywords = ['登录', '注册', '发布作品', '找论坛', '下载App', 
+                                      '小程序', '移动App', '触屏版', 'i车商', '本地服务',
+                                      '选择城市', '搜索', '点赞', '评论', '收藏', '分享',
+                                      '所有标签', '试试其他标签', '商业模式', '新车预告']
+                        nav_count = sum(1 for keyword in nav_keywords if keyword in content)
+                        # 如果导航关键词太多，说明抓取到了导航内容而非正文
+                        if nav_count < 5:  # 导航关键词少于5个才认为是有效内容
+                            break
+                        else:
+                            content = None
+        elif is_gasgoo:
             # gasgoo网站的内容在#ArticleContent或.contentDetailed中
             content_elem = soup.select_one('#ArticleContent') or soup.select_one('.contentDetailed')
             if content_elem:
