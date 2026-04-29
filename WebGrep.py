@@ -566,7 +566,7 @@ def extract_news_content(url):
                         footer_start = len(content)  # 默认尾部从内容末尾开始
 
                         # 查找明确的尾部标识的位置
-                        for keyword in ['文章标签', '作者其他作品', '相关视频', '论坛推荐', '大家都在问', '点赞 评论 收藏 分享', '举报/纠错', '文中提及', '共创团队', '作者', '关注', '更多', '播放', '询价', '配置', '图片']:
+                        for keyword in footer_keywords:
                             pos = content.find(keyword)
                             if pos != -1 and pos < footer_start:
                                 footer_start = pos
@@ -588,32 +588,15 @@ def extract_news_content(url):
 
                         filtered_lines = []
                         # 查找正文结束的位置（遇到第一个底部关键词就停止）
-                        found_footer = False
                         for line in lines:
                             line_stripped = line.strip()
                             # 检查是否包含底部推荐内容的关键词（使用更宽松的匹配）
-                            # 先检查明确的尾部标识
-                            if any(keyword in line_stripped for keyword in ['文章标签', '作者其他作品', '相关视频', '论坛推荐', '大家都在问', '点赞 评论 收藏 分享', '举报/纠错', '文中提及', '共创团队', '作者', '关注', '更多', '播放', '询价', '配置', '图片']):
-                                found_footer = True
-                                break
-                            # 再检查其他底部关键词
                             if any(keyword in line_stripped for keyword in footer_keywords):
-                                found_footer = True
                                 break
                             # 跳过包含导航关键词的行
                             if not any(keyword in line_stripped for keyword in nav_keywords):
                                 filtered_lines.append(line)
 
-                        # 额外清理：移除包含"文章标签"、"作者其他作品"等尾部标识的行
-                        final_lines = []
-                        for line in filtered_lines:
-                            line_stripped = line.strip()
-                            # 如果遇到尾部标识，停止添加
-                            if any(keyword in line_stripped for keyword in ['文章标签', '作者其他作品', '相关视频', '论坛推荐', '大家都在问', '点赞 评论 收藏 分享', '举报/纠错', '文中提及', '共创团队', '作者', '关注', '更多', '播放', '询价', '配置', '图片']):
-                                break
-                            # 跳过空行和只包含空格的行
-                            if line_stripped:
-                                final_lines.append(line)
 
                         filtered_lines = final_lines
 
@@ -661,6 +644,46 @@ def extract_news_content(url):
                 for script in body(["script", "style"]):
                     script.extract()
                 content = body.get_text(separator='\n').strip()
+
+                # 使用footer_keywords过滤掉新闻后缀
+                if content:
+                    # 定义底部关键词
+                    footer_keywords = [
+                        '文章标签', '向编辑', '询底价',
+                        '作者其他作品',
+                        '进入主页', '相关视频', '论坛推荐',
+                        '大家都在问', '扫码下载汽车之家App',
+                        '京公网安备', '京ICP备', '信息网络传播视听节目许可证',
+                        '广播电视节目制作经营许可证', '中央网信办',
+                        '违法和不良信息举报中心', '举报电话', '举报邮箱', '隐私协议',
+                        '万 播放',
+                        'www.autohome.com.cn',
+                        '公司名称：北京车之家信息技术有限公司',
+                        '©', '京公网安备',
+                        '信息网络传播视听节目许可证:', '广播电视节目制作经营许可证:',
+                        '中央网信办违法和不良信息举报中心',
+                        '违法和不良信息举报电话:', '举报邮箱:',
+                        '隐私协议', '汽车之家 www.autohome.com.cn',
+                        '共创团队'
+                    ]
+
+                    # 只在内容的最后1/3长度范围内查找footer_keywords
+                    content_len = len(content)
+                    search_start = int(content_len * 2 / 3)  # 从2/3位置开始搜索
+                    search_content = content[search_start:]  # 获取最后1/3的内容
+
+                    # 从屁股后面往前扫描，查找footer_keywords
+                    footer_start = len(search_content)  # 默认从最后开始
+                    for keyword in footer_keywords:
+                        pos = search_content.rfind(keyword)  # 从后往前查找
+                        if pos != -1 and pos < footer_start:
+                            footer_start = pos
+
+                    # 如果找到了尾部标识，截断内容
+                    if footer_start < len(search_content):
+                        # 计算在原始content中的位置
+                        actual_footer_start = search_start + footer_start
+                        content = content[:actual_footer_start].strip()
 
         # 最终验证：确保内容有效
         if content:
