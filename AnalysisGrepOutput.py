@@ -123,7 +123,7 @@ def call_qwen_plus(prompt):
     response = Generation.call(
         model='qwen-plus',
         prompt=prompt,
-        max_tokens=16000,
+        max_tokens=32000,
         temperature=0.7,
     )
 
