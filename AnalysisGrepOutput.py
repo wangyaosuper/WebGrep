@@ -59,7 +59,7 @@ def create_analysis_prompt(news_list, custom_requirement=None):
         news_summary += f"\n新闻 {i}:\n"
         news_summary += f"标题: {news['title']}\n"
         news_summary += f"链接: {news['link']}\n"
-        news_summary += f"内容摘要: {news['content'][:500]}...\n"  # 只使用前500字
+        news_summary += f"内容摘要: {news['content'][:1500]}...\n"  # 只使用前500字
 
     # 构建基础提示词
     prompt = f"""你是一位专业的行业分析师，请对以下{len(selected_news)}篇科技新闻围绕智能驾驶进行深入分析。
