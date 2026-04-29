@@ -495,9 +495,36 @@ def extract_news_content(url):
                     # 移除脚本和样式标签
                     for script in content_elem(["script", "style"]):
                         script.extract()
+
+                    # 定义需要移除的class和id
+                    remove_selectors = [
+                        '.nav', '.navigation', '.header', '.footer', 
+                        '.sidebar', '.related', '.recommend', '.tags',
+                        '.author-info', '.share', '.comment', '.ad',
+                        '#footer', '#header', '#nav', '#sidebar',
+                        '.article-tags', '.article-footer', '.related-news',
+                        '.author-works', '.enter-homepage', '.related-videos',
+                        '.forum-recommend', '.q-and-a', '.download-app'
+                    ]
+
+                    # 移除不需要的元素
+                    for remove_selector in remove_selectors:
+                        for elem in content_elem.select(remove_selector):
+                            elem.extract()
+
                     content = content_elem.get_text(separator='\n').strip()
                     # 验证内容有效性
                     if content and len(content) > 100:
+                        # 先移除开头的导航信息
+                        # 查找正文开始的位置（遇到"正文"或"关注"等标识）
+                        content_start = 0
+                        for keyword in ['正文', '关注', '原创', '浏览']:
+                            pos = content.find(keyword)
+                            if pos != -1 and pos > content_start:
+                                content_start = pos
+                        # 如果找到了正文开始标识，截取从该位置开始的内容
+                        if content_start > 0:
+                            content = content[content_start:].strip()
                         # 检查内容是否包含大量导航文本（非新闻内容）
                         nav_keywords = ['登录', '注册', '发布作品', '找论坛', '下载App', 
                                       '小程序', '移动App', '触屏版', 'i车商', '本地服务',
@@ -522,27 +549,78 @@ def extract_news_content(url):
                             '京公网安备', '京ICP备', '信息网络传播视听节目许可证',
                             '广播电视节目制作经营许可证', '中央网信办',
                             '违法和不良信息举报中心', '举报电话', '举报邮箱', '隐私协议',
-                            '营业执照',  '万 播放'
+                            '万 播放', 
+                            'www.autohome.com.cn', 
+                            '公司名称：北京车之家信息技术有限公司',
+                            '©', '京公网安备',
+                            '信息网络传播视听节目许可证:', '广播电视节目制作经营许可证:',
+                            '中央网信办违法和不良信息举报中心',
+                            '违法和不良信息举报电话:', '举报邮箱:',
+                            '隐私协议', '汽车之家 www.autohome.com.cn',
+                            '共创团队' 
                         ]
 
                         # 先清理导航文本
                         # 进一步清理内容，移除导航相关的行
-                        lines = content.split('\n')
+                        # 直接在原始内容中查找尾部关键词的位置
+                        footer_start = len(content)  # 默认尾部从内容末尾开始
+
+                        # 查找明确的尾部标识的位置
+                        for keyword in ['文章标签', '作者其他作品', '相关视频', '论坛推荐', '大家都在问', '点赞 评论 收藏 分享', '举报/纠错', '文中提及', '共创团队', '作者', '关注', '更多', '播放', '询价', '配置', '图片']:
+                            pos = content.find(keyword)
+                            if pos != -1 and pos < footer_start:
+                                footer_start = pos
+
+                        # 如果找到了尾部标识，截断内容
+                        if footer_start < len(content):
+                            content = content[:footer_start].strip()
+
+                        # 使用多种分隔符分割内容
+                        # 尝试用换行符分割，如果没有换行符，则用空格分割
+                        if '\n' in content:
+                            lines = content.split('\n')
+                        else:
+                            # 用多个空格或制表符分割
+                            lines = re.split(r'[\s\t]{2,}', content)
+                            # 如果分割后仍然只有一行，尝试用单个空格分割
+                            if len(lines) == 1 and len(content) > 500:
+                                lines = content.split(' ')
+
                         filtered_lines = []
                         # 查找正文结束的位置（遇到第一个底部关键词就停止）
                         found_footer = False
                         for line in lines:
-                            # 检查是否包含底部推荐内容的关键词
-                            if any(keyword in line for keyword in footer_keywords):
+                            line_stripped = line.strip()
+                            # 检查是否包含底部推荐内容的关键词（使用更宽松的匹配）
+                            # 先检查明确的尾部标识
+                            if any(keyword in line_stripped for keyword in ['文章标签', '作者其他作品', '相关视频', '论坛推荐', '大家都在问', '点赞 评论 收藏 分享', '举报/纠错', '文中提及', '共创团队', '作者', '关注', '更多', '播放', '询价', '配置', '图片']):
+                                found_footer = True
+                                break
+                            # 再检查其他底部关键词
+                            if any(keyword in line_stripped for keyword in footer_keywords):
                                 found_footer = True
                                 break
                             # 跳过包含导航关键词的行
-                            if not any(keyword in line for keyword in nav_keywords):
+                            if not any(keyword in line_stripped for keyword in nav_keywords):
                                 filtered_lines.append(line)
+
+                        # 额外清理：移除包含"文章标签"、"作者其他作品"等尾部标识的行
+                        final_lines = []
+                        for line in filtered_lines:
+                            line_stripped = line.strip()
+                            # 如果遇到尾部标识，停止添加
+                            if any(keyword in line_stripped for keyword in ['文章标签', '作者其他作品', '相关视频', '论坛推荐', '大家都在问', '点赞 评论 收藏 分享', '举报/纠错', '文中提及', '共创团队', '作者', '关注', '更多', '播放', '询价', '配置', '图片']):
+                                break
+                            # 跳过空行和只包含空格的行
+                            if line_stripped:
+                                final_lines.append(line)
+
+                        filtered_lines = final_lines
 
                         content = '\n'.join(filtered_lines).strip()
                         # 如果内容太短，说明过滤掉了太多，可能不是有效内容
                         if len(content) > 50:
+                            # 找到有效内容，跳出selector循环
                             break
                         else:
                             content = None
@@ -724,6 +802,7 @@ def main():
 
     # 使用线程池并行处理链接
     news_list = []
+    failed_count = 0  # 统计失败的链接数量
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # 提交所有任务
         futures = {
@@ -736,8 +815,12 @@ def main():
             link = futures[future]
             try:
                 news = future.result()
+                # 检查是否获取失败
+                if news and news.get('title') == "获取失败":
+                    failed_count += 1
                 news_list.append(news)
             except Exception as e:
+                failed_count += 1
                 print(f"处理链接 {link} 时出错: {str(e)}")
 
     # 保存到文件
@@ -750,6 +833,10 @@ def main():
     print(f"正在保存结果到 '{output_file}'...")
     save_news_to_file(news_list, output_file)
     print(f"完成! 已保存 {len(news_list)} 条新闻到 '{output_file}'")
+
+    # 显示失败警告
+    if failed_count > 0:
+        print(f"\n警告: 共有 {failed_count} 个新闻抓取失败，可能是网络问题或链接无效")
 
 if __name__ == "__main__":
     main()
