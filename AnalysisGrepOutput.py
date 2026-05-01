@@ -91,8 +91,8 @@ def create_analysis_prompt(news_list, custom_requirement=None, prompt_template=N
 
     return prompt
 
-def call_qwen_plus(prompt):
-    """调用阿里云qwen-plus大模型"""
+def call_qwen_plus(prompt, model='qwen-plus'):
+    """调用阿里云大模型"""
     # 从环境变量获取API密钥
     api_key = os.environ.get('DASHSCOPE_API_KEY')
     if not api_key:
@@ -101,7 +101,7 @@ def call_qwen_plus(prompt):
     dashscope.api_key = api_key
 
     response = Generation.call(
-        model='qwen-plus',
+        model=model,
         prompt=prompt,
         max_tokens=32000,
         temperature=0.7,
@@ -160,16 +160,19 @@ def main():
         description='分析新闻文件并生成智能驾驶行业分析报告',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''示例用法:
-  python AnalysisGrepOutput.py news.txt
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md
-  python AnalysisGrepOutput.py news.txt --custom-requirement "特别关注华为和小鹏的动态"
-  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --custom-requirement "重点关注激光雷达技术发展"
+  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen-plus
+  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --custom-requirement "特别关注华为和小鹏的动态"
+  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen-plus --custom-requirement "重点关注激光雷达技术发展"
         '''
     )
     parser.add_argument('input_file', help='要分析的新闻文件路径')
     parser.add_argument('--prompt-file', '-p',
                        help='指定提示词模板文件路径（必填）',
                        required=True)
+    parser.add_argument('--model', '-m',
+                       help='指定使用的模型名称（默认: qwen-plus）',
+                       default='qwen-plus')
     parser.add_argument('--custom-requirement', '-c', 
                        help='添加用户定制化要求，用于补充大模型的提示词',
                        default=None)
@@ -182,6 +185,7 @@ def main():
     args = parser.parse_args()
     input_file = args.input_file
     prompt_file = args.prompt_file
+    model = args.model
     custom_requirement = args.custom_requirement
 
     if not os.path.exists(input_file):
@@ -216,9 +220,9 @@ def main():
     prompt = create_analysis_prompt(news_list, custom_requirement, prompt_template)
 
     # 调用大模型进行分析
-    print("正在调用大模型进行分析...")
+    print(f"正在调用大模型 '{model}' 进行分析...")
     try:
-        analysis = call_qwen_plus(prompt)
+        analysis = call_qwen_plus(prompt, model)
     except Exception as e:
         print(f"分析失败: {str(e)}")
         return
