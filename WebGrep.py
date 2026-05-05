@@ -13,12 +13,12 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
-def extract_links_from_file(filename):
+def extract_links_from_file(filename, time_filter=None):
     """从文件中提取所有URL链接"""
     # 检查文件扩展名
     if filename.endswith('.webarchive'):
         # 处理webarchive文件
-        return extract_links_from_webarchive(filename)
+        return extract_links_from_webarchive(filename, time_filter)
     else:
         # 处理普通文本文件
         with open(filename, 'r', encoding='utf-8') as f:
@@ -120,7 +120,7 @@ def extract_news_from_autohome_list(html_content):
     return news_list
 
 
-def extract_news_from_autonews_list(html_content):
+def extract_news_from_autonews_list(html_content, time_filter=None):
     """从autonews.com新闻列表页提取新闻信息"""
     soup = BeautifulSoup(html_content, 'html.parser')
     news_list = []
@@ -145,8 +145,9 @@ def extract_news_from_autonews_list(html_content):
     news_links = [a for a in all_links if 'story' in ' '.join(a.get('class', []))]
     print(f"找到 {len(news_links)} 个story链接")
     
-    for link_tag in news_links:
+    for index, link_tag in enumerate(news_links, 1):
         try:
+            print(f"[{index}/{len(news_links)}]")
             url = link_tag['href']
 
             # 构建完整URL
@@ -248,6 +249,15 @@ def extract_news_from_autonews_list(html_content):
                                 news_time = text
                                 break
 
+            # 打印当前分析的story链接信息
+            print(f"[{index}/{len(news_links)}] 标题: {title}")
+            print(f"[{index}/{len(news_links)}] 时间: {news_time}")
+
+            # 检查新闻时间是否符合过滤条件
+            if not is_news_after_time(news_time, time_filter):
+                print(f"[{index}/{len(news_links)}] 跳过（时间早于过滤时间）")
+                continue
+            print(f"[{index}/{len(news_links)}] （时间符合条件）")
             # 获取新闻完整内容
             full_content = ""
             try:
@@ -570,7 +580,7 @@ def is_news_link(url):
     # 其他情况不认为是新闻链接
     return False
 
-def extract_links_from_webarchive(filename):
+def extract_links_from_webarchive(filename, time_filter=None):
     """从webarchive文件中提取所有URL链接"""
     try:
         with open(filename, 'rb') as f:
@@ -645,7 +655,7 @@ def extract_links_from_webarchive(filename):
                     # 如果是autonews.com新闻列表页，直接提取新闻信息
                     elif is_autonews_list:
                         print("检测到autonews.com新闻列表页，直接提取新闻信息...")
-                        news_list = extract_news_from_autonews_list(html_content)
+                        news_list = extract_news_from_autonews_list(html_content, time_filter)
                         if news_list:
                             # 将新闻信息保存到work目录
                             work_dir = "work"
@@ -1629,7 +1639,7 @@ def main():
     autonews_news_from_list = []  # 存储从autonews列表页提取的新闻
     for input_file in input_files:
         print(f"正在从文件 '{input_file}' 中提取链接...")
-        links = extract_links_from_file(input_file)
+        links = extract_links_from_file(input_file, time_filter)
         print(f"从 '{input_file}' 找到 {len(links)} 个链接")
         all_links.extend(links)
 
