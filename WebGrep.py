@@ -287,7 +287,7 @@ def extract_news_from_autonews_list(html_content):
 
     # 方法2：如果方法1没有找到新闻，尝试从h2、h3标签中提取
     if not news_list:
-
+        print("抓取Auto News网站新闻，方法1没有找到新闻，尝试方法2...")
         for heading_tag in soup.find_all(['h2', 'h3']):
             try:
                 # 先尝试在h2/h3标签内查找a标签
