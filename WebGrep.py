@@ -254,10 +254,10 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
             print(f"[{index}/{len(news_links)}] 时间: {news_time}")
 
             # 检查新闻时间是否符合过滤条件
-            if not is_news_after_time(news_time, time_filter):
-                print(f"[{index}/{len(news_links)}] 跳过（时间早于过滤时间）")
-                continue
-            print(f"[{index}/{len(news_links)}] （时间符合条件）")
+            #if not is_news_after_time(news_time, time_filter):
+            #    print(f"[{index}/{len(news_links)}] 跳过（时间早于过滤时间）")
+            #    continue
+            #print(f"[{index}/{len(news_links)}] （时间符合条件）")
             # 获取新闻完整内容
             full_content = ""
             try:
@@ -1524,6 +1524,7 @@ def is_news_after_time(news_time_str, filter_time):
     # 尝试解析新闻时间
     news_time = None
     time_formats = [
+        '%Y-%m-%d %H:%M:%S',  # 支持gasgoo网站的时间格式（包含秒）
         '%Y-%m-%d %H:%M',
         '%Y-%m-%d',
         '%Y年%m月%d日',
