@@ -316,6 +316,9 @@ def extract_news_content(url):
         # 检查是否是autor网站
         is_autor = 'autor.com.cn' in url.lower()
 
+        # 检查是否是ithome网站
+        is_ithome = 'ithome.com' in url.lower()
+
         # 尝试提取标题
         title = None
         if is_autohome:
@@ -449,7 +452,109 @@ def extract_news_content(url):
                 break
 
         news_time = "未知时间"
-        if is_autor:
+        if is_ithome:
+            # ithome网站的时间提取逻辑
+            # IT之家的文章内容中包含时间信息，格式如："2026/5/4 15:17:29"
+            # 需要从文章内容中提取这个时间
+            # 首先尝试从meta标签中提取时间
+            meta_time = soup.find('meta', property='article:published_time')
+            if meta_time and meta_time.get('content'):
+                time_text = meta_time['content'].strip()
+                # 尝试解析ISO格式时间
+                try:
+                    dt = datetime.fromisoformat(time_text.replace('Z', '+00:00'))
+                    news_time = dt.strftime('%Y-%m-%d %H:%M')
+                except:
+                    pass
+
+            # 如果没有从meta标签获取到时间，尝试从文章内容中提取
+            if news_time == "未知时间":
+                # 尝试从HTML源码中提取时间
+                html_content = str(soup)
+                # 匹配格式：2026/5/4 15:17:29 或 2026/05/04 15:17:29
+                date_match = re.search(r'(\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2})', html_content)
+                if date_match:
+                    time_str = date_match.group(1)
+                    # 将时间格式标准化为 YYYY-MM-DD HH:MM
+                    try:
+                        # 尝试多种时间格式解析
+                        time_formats = [
+                            '%Y/%m/%d %H:%M:%S',
+                            '%Y/%m/%d %H:%M',
+                            '%Y/%m/%d %H:%M',
+                            '%Y/%m/%d %H:%M:%S'
+                        ]
+                        for fmt in time_formats:
+                            try:
+                                dt = datetime.strptime(time_str, fmt)
+                                news_time = dt.strftime('%Y-%m-%d %H:%M')
+                                break
+                            except:
+                                continue
+                    except:
+                        pass
+
+            # 如果还是没有提取到时间，尝试从body文本中提取
+            if news_time == "未知时间":
+                body = soup.find('body')
+                if body:
+                    body_text = body.get_text()
+                    # 匹配格式：2026/5/4 15:17:29 或 2026/05/04 15:17:29
+                    date_match = re.search(r'(\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2})', body_text)
+                    if date_match:
+                        time_str = date_match.group(1)
+                        # 将时间格式标准化为 YYYY-MM-DD HH:MM
+                        try:
+                            # 尝试多种时间格式解析
+                            time_formats = [
+                                '%Y/%m/%d %H:%M:%S',
+                                '%Y/%m/%d %H:%M',
+                                '%Y/%m/%d %H:%M',
+                                '%Y/%m/%d %H:%M:%S'
+                            ]
+                            for fmt in time_formats:
+                                try:
+                                    dt = datetime.strptime(time_str, fmt)
+                                    news_time = dt.strftime('%Y-%m-%d %H:%M')
+                                    break
+                                except:
+                                    continue
+                        except:
+                            pass
+
+            # 如果还是没有提取到时间，尝试从标题后的文本中提取
+            if news_time == "未知时间":
+                # 查找标题元素
+                title_elem = soup.find('h1')
+                if title_elem:
+                    # 获取标题后的兄弟元素
+                    next_elem = title_elem.find_next_sibling()
+                    while next_elem and news_time == "未知时间":
+                        elem_text = next_elem.get_text()
+                        # 匹配格式：2026/5/4 15:17:29 或 2026/05/04 15:17:29
+                        date_match = re.search(r'(\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2})', elem_text)
+                        if date_match:
+                            time_str = date_match.group(1)
+                            # 将时间格式标准化为 YYYY-MM-DD HH:MM
+                            try:
+                                # 尝试多种时间格式解析
+                                time_formats = [
+                                    '%Y/%m/%d %H:%M:%S',
+                                    '%Y/%m/%d %H:%M',
+                                    '%Y/%m/%d %H:%M',
+                                    '%Y/%m/%d %H:%M:%S'
+                                ]
+                                for fmt in time_formats:
+                                    try:
+                                        dt = datetime.strptime(time_str, fmt)
+                                        news_time = dt.strftime('%Y-%m-%d %H:%M')
+                                        break
+                                    except:
+                                        continue
+                            except:
+                                pass
+                        next_elem = next_elem.find_next_sibling()
+        elif is_autor:
             # autor网站的时间在.tt1类的span标签中
             tt1_elem = soup.find('span', class_='tt1')
             if tt1_elem:
