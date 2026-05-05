@@ -140,7 +140,6 @@ def extract_news_from_autonews_list(html_content):
     ]
 
     # 方法1：从所有包含/news/的链接中提取新闻
-    print("=== 从autonews.com提取新闻 ===")
     all_links = soup.find_all('a', href=True)
     # 查找所有包含"story" class的链接
     news_links = [a for a in all_links if 'story' in ' '.join(a.get('class', []))]
@@ -172,7 +171,6 @@ def extract_news_from_autonews_list(html_content):
             if len(title) < 10:
                 continue
 
-            print("Title:", title)
             # 查找摘要（在父元素中查找）
             summary = ""
             parent = link_tag.parent
@@ -212,7 +210,6 @@ def extract_news_from_autonews_list(html_content):
                                 summary = text
                                 break
 
-            print("Summary:", summary)
             # 查找时间
             news_time = "未知时间"
             if parent:
@@ -268,7 +265,6 @@ def extract_news_from_autonews_list(html_content):
                 print(f"获取新闻内容时出错: {str(e)}")
                 full_content = "无法获取完整内容"
 
-            print("Full Content:", full_content)
             # 组合列表页摘要和完整文章内容
             content = ""
             # 只有当摘要与标题不同且长度足够时，才使用列表页的摘要
@@ -280,8 +276,6 @@ def extract_news_from_autonews_list(html_content):
                 else:
                     content = full_content
 
-            print("Content:", content)
-            print("=============================\n\n")
             news_list.append({
                 'title': title or "未知标题",
                 'time': news_time,
@@ -293,7 +287,6 @@ def extract_news_from_autonews_list(html_content):
 
     # 方法2：如果方法1没有找到新闻，尝试从h2、h3标签中提取
     if not news_list:
-        print("方法1没有找到新闻，尝试方法2...")
 
         for heading_tag in soup.find_all(['h2', 'h3']):
             try:
@@ -1434,9 +1427,7 @@ def save_news_to_file(news_list, output_file):
             content = news.get('content', '无内容')
 
             # 只移除"Skip to main content"字符串，保留所有其他内容
-            print("Content before strip:", content)
             content = content.replace('Skip to main content', '').strip()
-            print("Content Save:", content)
 
             # 改进的过滤逻辑：只在内容的最后1/3部分查找footer关键词
             # 这样可以避免过滤掉出现在内容中间的"Featured Stories"等
