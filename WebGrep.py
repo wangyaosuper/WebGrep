@@ -1130,23 +1130,50 @@ def extract_news_content(url):
                         news_time = parent_text.strip()
                         break
         elif is_gasgoo:
-            # gasgoo网站的时间在.userInfo div中的span标签里
+            # gasgoo网站的时间提取逻辑
+            # 首先尝试从userInfo div中查找时间
             user_info = soup.find('div', class_='userInfo')
             if user_info:
-                time_span = user_info.find('span')
-                if time_span:
-                    news_time = time_span.get_text().strip()
-            # 如果没有找到时间，尝试其他选择器
+                # 查找所有span标签，找到包含日期的那个
+                time_spans = user_info.find_all('span')
+                for span in time_spans:
+                    text = span.get_text().strip()
+                    # 验证是否包含日期格式（YYYY-MM-DD或YYYY年MM月DD日）
+                    if re.search(r'\d{4}[-年]\d{1,2}[-月]\d{1,2}', text):
+                        news_time = text
+                        break
+
+            # 如果没有找到时间，尝试从文章元数据中提取
             if news_time == "未知时间":
-                time_selectors = ['.time', '.date', '.publish-time', '.article-time', '.news-time', 'time']
+                # 尝试从meta标签中提取时间
+                meta_time = soup.find('meta', property='article:published_time')
+                if meta_time and meta_time.get('content'):
+                    time_text = meta_time['content'].strip()
+                    try:
+                        dt = datetime.fromisoformat(time_text.replace('Z', '+00:00'))
+                        news_time = dt.strftime('%Y-%m-%d %H:%M')
+                    except:
+                        pass
+
+            # 如果还是没有找到时间，尝试其他选择器
+            if news_time == "未知时间":
+                time_selectors = ['.time', '.date', '.publish-time', '.article-time', '.news-time', 'time', '.pub-time']
                 for selector in time_selectors:
                     time_elem = soup.select_one(selector)
                     if time_elem:
                         time_text = time_elem.get_text().strip()
                         # 验证时间格式（包含年月日）
-                        if re.search(r'\d{4}-\d{2}-\d{2}', time_text):
+                        if re.search(r'\d{4}[-年]\d{1,2}[-月]\d{1,2}', time_text):
                             news_time = time_text
                             break
+
+            # 如果还是没有找到时间，尝试从HTML源码中提取
+            if news_time == "未知时间":
+                html_content = str(soup)
+                # 匹配格式：2026-05-08 11:05:46 或 2026年5月8日
+                date_match = re.search(r'(\d{4}[-年]\d{1,2}[-月]\d{1,2}[日\s]*\d{1,2}:\d{1,2}:\d{1,2})', html_content)
+                if date_match:
+                    news_time = date_match.group(1)
         else:
             news_time = time_elem.get_text().strip() if time_elem else "未知时间"
 
