@@ -184,10 +184,17 @@ tr:hover {
 
 """
 
+    ai_tail = """
+---
+AI辅助行业新闻正在建设优化中，如有意见或建议欢迎反馈～
+
+"""
+
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(css_style)
         f.write(ai_notice)
         f.write(content)
+        f.write(ai_tail)
 
 def main():
     # 设置命令行参数解析
