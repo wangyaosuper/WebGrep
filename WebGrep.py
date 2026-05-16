@@ -12,9 +12,48 @@ import base64
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 
 # 导入 OutputReport 模块，用于生成新闻抓取统计报告
 from OutputReport import parse_news_file, analyze_news, generate_report
+
+
+# 创建带重试机制的全局 Session
+def _create_retry_session(
+    retries=7,
+    backoff_factor=1,
+    status_forcelist=(500, 502, 503, 504),
+    timeout=30
+):
+    """创建一个带自动重试和超时设置的 requests.Session
+
+    - retries: 最大重试次数（默认7次）
+    - backoff_factor: 退避因子，重试间隔为 {backoff_factor} * (2 ** (retry_count - 1)) 秒
+      默认1，即 1s, 2s, 4s...
+    - status_forcelist: 触发重试的HTTP状态码
+    - timeout: 默认请求超时秒数
+    """
+    session = requests.Session()
+
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=["HEAD", "GET", "OPTIONS", "POST"],
+        raise_on_status=False,
+    )
+
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    session._timeout = timeout
+    return session
+
+
+# 全局 Session 实例（requests.Session 底层使用 urllib3 连接池，是线程安全的）
+_retry_session = _create_retry_session()
 
 def extract_links_from_file(filename, time_filter=None):
     """从文件中提取所有URL链接"""
@@ -928,7 +967,7 @@ def extract_news_content(url):
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = _retry_session.get(url, headers=headers, timeout=_retry_session._timeout)
         response.encoding = response.apparent_encoding
         soup = BeautifulSoup(response.text, 'html.parser')
 
