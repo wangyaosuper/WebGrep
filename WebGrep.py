@@ -580,8 +580,12 @@ def is_news_link(url):
     # 其他情况不认为是新闻链接
     return False
 
+# 全局变量，用于在extract_links_from_webarchive和主函数之间传递autonews列表页新闻
+_autonews_list_cache = []
+
 def extract_links_from_webarchive(filename, time_filter=None):
     """从webarchive文件中提取所有URL链接"""
+    global _autonews_list_cache
     try:
         with open(filename, 'rb') as f:
             plist = plistlib.load(f)
@@ -657,13 +661,9 @@ def extract_links_from_webarchive(filename, time_filter=None):
                         print("检测到autonews.com新闻列表页，直接提取新闻信息...")
                         news_list = extract_news_from_autonews_list(html_content, time_filter)
                         if news_list:
-                            # 将新闻信息保存到work目录
-                            work_dir = "work"
-                            if not os.path.exists(work_dir):
-                                os.makedirs(work_dir)
-                            output_file = os.path.join(work_dir, f"autonews_news_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-                            save_news_to_file(news_list, output_file)
-                            print(f"已从autonews.com新闻列表页提取 {len(news_list)} 条新闻并保存到 {output_file}")
+                            # 将新闻信息存入全局缓存，避免生成临时文件
+                            _autonews_list_cache.extend(news_list)
+                            print(f"已从autonews.com新闻列表页提取 {len(news_list)} 条新闻并缓存到内存")
                         else:
                             print("警告：未能从autonews.com新闻列表页提取到新闻，可能是因为新闻内容是通过JavaScript动态加载的")
                         # 同时也提取链接，保持原有功能
@@ -1664,46 +1664,16 @@ def main():
 
     # 从所有文件中提取链接
     all_links = []
-    autonews_news_from_list = []  # 存储从autonews列表页提取的新闻
     for input_file in input_files:
         print(f"正在从文件 '{input_file}' 中提取链接...")
         links = extract_links_from_file(input_file, time_filter)
         print(f"从 '{input_file}' 找到 {len(links)} 个链接")
         all_links.extend(links)
 
-        # 检查是否从autonews列表页提取了新闻
-        # 只读取当前运行创建的autonews新闻文件
-        # 通过比较文件名中的时间戳来确定是否是当前运行
-        current_run_timestamp = datetime.now().strftime('%Y%m%d_%H%M')
-        if os.path.exists("work"):
-            for filename in os.listdir("work"):
-                if filename.startswith("autonews_news_") and filename.endswith(".txt"):
-                    # 检查文件名中的时间戳是否匹配当前运行
-                    # 格式：autonews_news_YYYYMMDD_HHMMSS.txt
-                    if current_run_timestamp in filename:
-                        filepath = os.path.join("work", filename)
-                        print(f"发现从autonews列表页提取的新闻文件: {filename}")
-                        # 读取该文件中的新闻
-                        with open(filepath, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                            # 解析新闻内容
-                            news_items = content.split("==================================================")
-                            for item in news_items:
-                                if "标题:" in item:
-                                    title_match = re.search(r'标题: (.+)', item)
-                                    time_match = re.search(r'时间: (.+)', item)
-                                    url_match = re.search(r'链接: (.+)', item)
-                                    content_match = re.search(r'内容:\s*(.+?)(?=\s*$)', item, re.MULTILINE)
-
-                                    if title_match and url_match:
-                                        news = {
-                                            'title': title_match.group(1).strip(),
-                                            'time': time_match.group(1).strip() if time_match else "未知时间",
-                                            'url': url_match.group(1).strip(),
-                                            'content': content_match.group(1).strip() if content_match else "无摘要"
-                                        }
-                                        autonews_news_from_list.append(news)
-                        print(f"从 {filename} 中读取了 {len(autonews_news_from_list)} 条新闻")
+    # 从全局缓存中获取autonews列表页新闻
+    autonews_news_from_list = _autonews_list_cache[:]
+    if autonews_news_from_list:
+        print(f"从内存缓存中获取了 {len(autonews_news_from_list)} 条从autonews列表页提取的新闻")
 
     # 去重
     all_links = list(set(all_links))
