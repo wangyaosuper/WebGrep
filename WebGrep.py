@@ -829,24 +829,9 @@ def extract_links_from_webarchive(filename, time_filter=None):
                             print(f"已从electrek.co新闻列表页提取 {len(news_list)} 条新闻并缓存到内存")
                         else:
                             print("警告：未能从electrek.co新闻列表页提取到新闻")
-                        # 同时也提取链接，保持原有功能
-                        soup = BeautifulSoup(html_content, 'html.parser')
-                        for a_tag in soup.find_all('a', href=True):
-                            href = a_tag['href']
-                            # 只处理electrek.co的链接
-                            if 'electrek.co' in href or href.startswith('/'):
-                                # 处理不同类型的链接
-                                if href.startswith('http'):
-                                    links.append(href)
-                                elif href.startswith('//'):
-                                    # 处理以//开头的协议相对链接
-                                    links.append('https:' + href)
-                                elif href.startswith('/') and not href.startswith('//'):
-                                    # 处理以/开头的绝对路径链接
-                                    base_url = plist['WebMainResource']['WebResourceURL']
-                                    parsed = base_url.split('/')
-                                    if len(parsed) >= 3:
-                                        links.append(f"{parsed[0]}//{parsed[2]}{href}")
+                        # electrek列表页已经通过extract_news_from_electrek_list获取了完整新闻内容
+                        # 不再提取链接，避免与缓存新闻重复（同一文章的#more-xxx和?comments变体会导致重复）
+                        print("electrek.co列表页新闻已缓存，跳过链接提取以避免重复")
                     else:
                         # 非autohome新闻列表页，使用原有逻辑
                         soup = BeautifulSoup(html_content, 'html.parser')
