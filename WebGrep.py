@@ -13,6 +13,9 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
+# 导入 OutputReport 模块，用于生成新闻抓取统计报告
+from OutputReport import parse_news_file, analyze_news, generate_report
+
 def extract_links_from_file(filename, time_filter=None):
     """从文件中提取所有URL链接"""
     # 检查文件扩展名
@@ -2122,6 +2125,20 @@ def main():
     # 显示失败警告
     if failed_count > 0:
         print(f"\n警告: 共有 {failed_count} 个新闻抓取失败，可能是网络问题或链接无效")
+
+    # 调用 OutputReport 对生成的 news_output 文件进行统计分析
+    print("\n" + "=" * 50)
+    print("正在生成新闻抓取统计报告...")
+    print("=" * 50)
+    try:
+        report_news_list = parse_news_file(output_file)
+        if report_news_list:
+            report_analysis = analyze_news(report_news_list)
+            generate_report(output_file, report_analysis)
+        else:
+            print("文件中未找到任何新闻条目，跳过统计报告生成。")
+    except Exception as e:
+        print(f"生成统计报告时出错: {e}")
 
 if __name__ == "__main__":
     main()
