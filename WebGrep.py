@@ -557,31 +557,83 @@ def is_news_link(url):
         return False
 
     # 排除图片、CSS、JavaScript等资源链接
-    excluded_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', '.css', '.js', '.woff', '.woff2', '.ttf', '.eot', '.webp', '.avif']
+    excluded_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.ico', '.css', '.js', '.woff', '.woff2', '.ttf', '.eot', '.webp', '.avif', '.otf', '.mp4', '.mp3', '.wav', '.flac', '.webm', '.ogg', '.pdf', '.zip', '.gz', '.tar', '.rar', '.7z', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']
     for ext in excluded_extensions:
         if url_lower.endswith(ext):
             return False
 
     # 排除静态资源路径
-    excluded_paths = ['/static/', '/assets/', '/images/', '/img/', '/css/', '/js/', '/thumbnail/', '/uploads/']
+    excluded_paths = ['/static/', '/assets/', '/images/', '/img/', '/css/', '/js/', '/thumbnail/', '/uploads/', '/fonts/', '/font/', '/icons/', '/favicon/', '/media/', '/video/', '/audio/']
     for path in excluded_paths:
         if path in url_lower:
             return False
 
     # 排除包含特定查询参数的链接
-    excluded_params = ['format=jpg', 'format=png', 'format=gif', 'format=svg', 'format=webp', 'format=avif', 'x-bce-process=image']
+    excluded_params = ['format=jpg', 'format=png', 'format=gif', 'format=svg', 'format=webp', 'format=avif', 'x-bce-process=image', 'fvd=', 'primer=', 'ver=']
     for param in excluded_params:
         if param in url_lower:
             return False
 
+    # 辅助函数：提取域名部分
+    def get_domain_part(url_str):
+        url_without_protocol = url_str.split('://')[-1] if '://' in url_str else url_str
+        first_slash_pos = url_without_protocol.find('/')
+        return url_without_protocol[:first_slash_pos] if first_slash_pos != -1 else url_without_protocol
+
     # 排除明显的资源域名
-    excluded_domains = ['img.', 'image.', 'static.', 'assets.', 'cdn.', 'hm.baidu.com']
+    excluded_domains = ['img.', 'image.', 'static.', 'assets.', 'cdn.', 'hm.baidu.com', 'fonts.', 'font.']
     for domain in excluded_domains:
         if domain in url_lower:
-            # 检查是否在域名部分（在第一个/之前）
-            url_without_protocol = url_lower.split('://')[-1] if '://' in url_lower else url_lower
-            first_slash_pos = url_without_protocol.find('/')
-            domain_part = url_without_protocol[:first_slash_pos] if first_slash_pos != -1 else url_without_domain
+            domain_part = get_domain_part(url_lower)
+            if domain in domain_part:
+                return False
+
+    # 排除字体服务域名
+    excluded_font_domains = [
+        'typekit.net', 'use.typekit.net', 'fonts.googleapis.com', 'fonts.gstatic.com',
+        'cdn.jsdelivr.net', 'fast.fonts.net', 'cloud.typography.com'
+    ]
+    for domain in excluded_font_domains:
+        if domain in url_lower:
+            domain_part = get_domain_part(url_lower)
+            if domain in domain_part:
+                return False
+
+    # 排除头像服务域名
+    excluded_avatar_domains = [
+        'gravatar.com', 'secure.gravatar.com', 'avatar', 'identicon'
+    ]
+    for domain in excluded_avatar_domains:
+        if domain in url_lower:
+            domain_part = get_domain_part(url_lower)
+            if domain in domain_part:
+                return False
+
+    # 排除广告和隐私相关域名
+    excluded_ad_domains = [
+        'fundingchoicesmessages.google.com', 'pagead2.googlesyndication.com',
+        'adservice.google.com', 'googleads.g.doubleclick.net',
+        'tpc.googlesyndication.com', 'ad.doubleclick.net',
+        'ads.pubmatic.com', 'bid.g.doubleclick.net',
+        'cm.g.doubleclick.net', 'googleadservices.com',
+        'adnxs.com', 'ads.yahoo.com', 'amazon-adsystem.com',
+        'aax.amazon-adsystem.com', 'c.amazon-adsystem.com'
+    ]
+    for domain in excluded_ad_domains:
+        if domain in url_lower:
+            domain_part = get_domain_part(url_lower)
+            if domain in domain_part:
+                return False
+
+    # 排除视频播放器和嵌入服务域名
+    excluded_embed_domains = [
+        'videoplayerhub.com', 'player.vimeo.com', 'youtube.com/embed',
+        'youtube-nocookie.com', 'players.brightcove.net',
+        'cdn.jwplayer.com', 'content.jwplatform.com'
+    ]
+    for domain in excluded_embed_domains:
+        if domain in url_lower:
+            domain_part = get_domain_part(url_lower)
             if domain in domain_part:
                 return False
 
@@ -590,19 +642,18 @@ def is_news_link(url):
         'analytics.', 'tracking.', 'stats.', 'metrics.', 'clarity.ms',
         'twitter.com', 't.co', 'facebook.com', 'linkedin.com',
         'doubleclick.net', 'google-analytics.com', 'googletagmanager.com',
-        'adobe.com', 'hotjar.com', 'segment.io', 'mixpanel.com'
+        'adobe.com', 'hotjar.com', 'segment.io', 'mixpanel.com',
+        'connect.facebook.net', 'pixel.', 'beacon.', 'sentry.io',
+        'newrelic.com', 'nr-data.net'
     ]
     for domain in excluded_tracking_domains:
         if domain in url_lower:
-            # 检查是否在域名部分（在第一个/之前）
-            url_without_protocol = url_lower.split('://')[-1] if '://' in url_lower else url_lower
-            first_slash_pos = url_without_protocol.find('/')
-            domain_part = url_without_protocol[:first_slash_pos] if first_slash_pos != -1 else url_without_domain
+            domain_part = get_domain_part(url_lower)
             if domain in domain_part:
                 return False
 
     # 排除非新闻链接的路径
-    excluded_paths_news = ['/tougao/', '/?page=', '/register', '/login', '/search', '/icp.html', '/homepage', '/dd_number/', '/special/', '/special_category/', '/creator/', '/new-tech/C-', '/mikecrm.com/']
+    excluded_paths_news = ['/tougao/', '/?page=', '/register', '/login', '/search', '/icp.html', '/homepage', '/dd_number/', '/special/', '/special_category/', '/creator/', '/new-tech/C-', '/mikecrm.com/', '/avatar/', '/gallery.js', '/embed/']
     for path in excluded_paths_news:
         if path in url_lower:
             return False
@@ -619,6 +670,12 @@ def is_news_link(url):
 
     # 排除首页链接（以/结尾或没有路径）
     if url_lower.endswith('/') or re.search(r'https?://[^/]+/?$', url_lower):
+        return False
+
+    # 排除URL路径过短的链接（如只有域名+单层路径，通常是导航页）
+    parsed_path = url_lower.split('://')[-1] if '://' in url_lower else url_lower
+    slash_count = parsed_path.count('/')
+    if slash_count < 2:
         return False
 
     # 针对autohome网站的特殊处理
@@ -743,11 +800,12 @@ def extract_links_from_webarchive(filename, time_filter=None):
                 if 'electrek.co' in main_url:
                     is_electrek_list = True
 
-        # 获取子资源中的URL
-        if 'WebSubresources' in plist:
-            for resource in plist['WebSubresources']:
-                if 'WebResourceURL' in resource:
-                    links.append(resource['WebResourceURL'])
+        # 注意：WebSubresources 包含的是页面子资源（字体、CSS、JS、图片等），不包含新闻链接
+        # 跳过 WebSubresources，避免引入大量非新闻链接
+        # if 'WebSubresources' in plist:
+        #     for resource in plist['WebSubresources']:
+        #         if 'WebResourceURL' in resource:
+        #             links.append(resource['WebResourceURL'])
 
         # 从HTML内容中提取更多链接
         if 'WebMainResource' in plist and 'WebResourceData' in plist['WebMainResource']:
@@ -1971,44 +2029,52 @@ def main():
     all_links = list(set(all_links))
     print(f"总共找到 {len(all_links)} 个唯一链接")
 
-    if not all_links:
-        print("未找到任何链接")
-        return
-
-    # 设置线程数
-    max_workers = 10  # 可以根据需要调整
-
-    # 创建线程锁，用于同步打印
-    print_lock = threading.Lock()
-
     # 使用线程池并行处理链接
     news_list = []
     failed_count = 0  # 统计失败的链接数量
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        futures = {
-            executor.submit(process_link, link, i+1, len(all_links), print_lock): link 
-            for i, link in enumerate(all_links)
-        }
 
-        # 等待所有任务完成并收集结果
-        for future in as_completed(futures):
-            link = futures[future]
-            try:
-                news = future.result()
-                # 检查是否获取失败
-                if news and news.get('title') == "获取失败":
+    if all_links:
+        # 设置线程数
+        max_workers = 10  # 可以根据需要调整
+
+        # 创建线程锁，用于同步打印
+        print_lock = threading.Lock()
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            futures = {
+                executor.submit(process_link, link, i+1, len(all_links), print_lock): link
+                for i, link in enumerate(all_links)
+            }
+
+            # 等待所有任务完成并收集结果
+            for future in as_completed(futures):
+                link = futures[future]
+                try:
+                    news = future.result()
+                    # 检查是否获取失败
+                    if news and news.get('title') == "获取失败":
+                        failed_count += 1
+                        # 不再将失败的新闻写入输出文件
+                        print(f"跳过失败链接: {link}")
+                    elif news:
+                        # 检查内容是否为"无法提取内容"或"未知标题"
+                        if news.get('content') == "无法提取内容" or news.get('title') == "未知标题":
+                            failed_count += 1
+                            print(f"跳过无效新闻（标题或内容无效）: {link}")
+                        # 检查新闻时间是否符合过滤条件
+                        elif is_news_after_time(news.get('time'), time_filter):
+                            news_list.append(news)
+                        else:
+                            print(f"跳过新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
+                except Exception as e:
                     failed_count += 1
-                    news_list.append(news)
-                elif news:
-                    # 检查新闻时间是否符合过滤条件
-                    if is_news_after_time(news.get('time'), time_filter):
-                        news_list.append(news)
-                    else:
-                        print(f"跳过新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
-            except Exception as e:
-                failed_count += 1
-                print(f"处理链接 {link} 时出错: {str(e)}")
+                    print(f"处理链接 {link} 时出错: {str(e)}")
+    else:
+        if not autonews_news_from_list and not electrek_news_from_list:
+            print("未找到任何链接，也没有缓存新闻")
+            return
+        print("未找到需要单独抓取的链接，但有缓存新闻，继续处理缓存...")
 
     # 保存到文件
     # 创建work目录（如果不存在）
