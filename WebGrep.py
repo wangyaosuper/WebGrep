@@ -120,6 +120,119 @@ def extract_news_from_autohome_list(html_content):
     return news_list
 
 
+
+def extract_news_from_electrek_list(html_content, time_filter=None):
+    """从electrek.co新闻列表页提取新闻信息"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    news_list = []
+
+    # 使用集合来去重
+    seen_urls = set()
+
+    # 定义需要排除的标题关键词
+    excluded_title_keywords = [
+        'Subscribe', 'Log in', 'Sign up', 'Menu', 'Search',
+        'About', 'Contact', 'Advertise', 'Privacy', 'Terms',
+        'Newsletter', 'Follow us', 'Most Popular', 'Guides',
+        'Download', 'Podcast'
+    ]
+
+    # 查找所有article标签
+    articles = soup.find_all('article')
+    print(f"找到 {len(articles)} 个article元素")
+
+    for index, article in enumerate(articles, 1):
+        try:
+            # 查找标题链接
+            link_tag = article.find('a', class_='article__title-link')
+            if not link_tag:
+                continue
+
+            url = link_tag['href']
+            # 清理URL中可能的引号
+            url = url.strip('"').strip("'")
+
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif not url.startswith('http'):
+                if url.startswith('/'):
+                    url = 'https://electrek.co' + url
+                else:
+                    continue
+
+            # 去重
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            # 提取标题
+            title = link_tag.get_text().strip()
+
+            # 检查标题是否包含排除的关键词
+            if any(keyword.lower() in title.lower() for keyword in excluded_title_keywords):
+                continue
+
+            # 检查标题长度
+            if len(title) < 10:
+                continue
+
+            # 查找时间（electrek使用相对时间如"8 hours ago"）
+            news_time = "未知时间"
+            time_elem = article.find('span', class_='meta__post-date')
+            if time_elem:
+                news_time = time_elem.get_text().strip()
+
+            # 尝试从URL中提取日期（格式：/2026/05/15/）
+            if news_time == "未知时间" or 'ago' in news_time.lower():
+                date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', url)
+                if date_match:
+                    news_time = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+
+            # 查找摘要（electrek列表页通常没有摘要，但尝试查找）
+            summary = ""
+            excerpt_elem = article.find('p', class_='article__excerpt')
+            if excerpt_elem:
+                summary = excerpt_elem.get_text().strip()
+
+            print(f"[{index}/{len(articles)}] 标题: {title}")
+            print(f"[{index}/{len(articles)}] 时间: {news_time}")
+
+            # 获取新闻完整内容
+            full_content = ""
+            try:
+                news_data = extract_news_content(url)
+                if news_data and news_data.get('content'):
+                    full_content = news_data['content']
+                    if news_data.get('time') and news_data.get('time') != "未知时间":
+                        news_time = news_data['time']
+                    if news_data.get('title') and news_data.get('title') != "未知标题":
+                        title = news_data['title']
+            except Exception as e:
+                print(f"获取新闻内容时出错: {str(e)}")
+                full_content = "无法获取完整内容"
+
+            # 组合摘要和完整内容
+            content = ""
+            if summary:
+                content = summary
+            if full_content and full_content != "无法获取完整内容":
+                if content:
+                    content = content + "\n" + full_content
+                else:
+                    content = full_content
+
+            news_list.append({
+                'title': title or "未知标题",
+                'time': news_time,
+                'url': url,
+                'content': content or "无摘要"
+            })
+        except Exception as e:
+            continue
+
+    return news_list
+
+
 def extract_news_from_autonews_list(html_content, time_filter=None):
     """从autonews.com新闻列表页提取新闻信息"""
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -565,6 +678,20 @@ def is_news_link(url):
                 return True
         return False
 
+    # 针对electrek.co网站的特殊处理
+    if 'electrek.co' in url_lower:
+        # electrek.co的新闻链接格式：/年/月/日/英文slug/
+        # 例如：/2026/05/15/rivian-r2-configurator-live-pricing-options/
+        # 也可能带有 #more-xxx 或 ?extended-comments=1#comments 等后缀
+        # 先去掉查询参数和锚点再匹配
+        url_path = url_lower.split('?')[0].split('#')[0]
+        if re.search(r'/\d{4}/\d{2}/\d{2}/[a-z0-9-]+/?$', url_path):
+            return True
+        # 排除guides、pages等非新闻链接
+        if any(path in url_lower for path in ['/guides/', '/page/', '/author/', '/about/', '/contact/', '/advertise/', '/privacy/', '/terms/', '/category/', '/tag/']):
+            return False
+        return False
+
     # 只保留看起来像新闻文章的链接
     # 新闻链接通常包含数字或特定的路径模式
     # 检查URL是否包含数字，这通常是新闻文章的特征
@@ -582,10 +709,13 @@ def is_news_link(url):
 
 # 全局变量，用于在extract_links_from_webarchive和主函数之间传递autonews列表页新闻
 _autonews_list_cache = []
+# 全局变量，用于在extract_links_from_webarchive和主函数之间传递electrek列表页新闻
+_electrek_list_cache = []
 
 def extract_links_from_webarchive(filename, time_filter=None):
     """从webarchive文件中提取所有URL链接"""
     global _autonews_list_cache
+    global _electrek_list_cache
     try:
         with open(filename, 'rb') as f:
             plist = plistlib.load(f)
@@ -593,6 +723,7 @@ def extract_links_from_webarchive(filename, time_filter=None):
         links = []
         is_autohome_list = False
         is_autonews_list = False
+        is_electrek_list = False
 
         # 获取主URL
         if 'WebMainResource' in plist:
@@ -607,6 +738,10 @@ def extract_links_from_webarchive(filename, time_filter=None):
                 # 检查是否是autonews.com新闻列表页
                 if 'autonews.com' in main_url and ('/news/' in main_url or main_url.endswith('autonews.com/') or main_url.endswith('autonews.com')):
                     is_autonews_list = True
+
+                # 检查是否是electrek.co新闻列表页
+                if 'electrek.co' in main_url:
+                    is_electrek_list = True
 
         # 获取子资源中的URL
         if 'WebSubresources' in plist:
@@ -684,6 +819,34 @@ def extract_links_from_webarchive(filename, time_filter=None):
                                     parsed = base_url.split('/')
                                     if len(parsed) >= 3:
                                         links.append(f"{parsed[0]}//{parsed[2]}{href}")
+                    # 如果是electrek.co新闻列表页，直接提取新闻信息
+                    elif is_electrek_list:
+                        print("检测到electrek.co新闻列表页，直接提取新闻信息...")
+                        news_list = extract_news_from_electrek_list(html_content, time_filter)
+                        if news_list:
+                            # 将新闻信息存入全局缓存，避免生成临时文件
+                            _electrek_list_cache.extend(news_list)
+                            print(f"已从electrek.co新闻列表页提取 {len(news_list)} 条新闻并缓存到内存")
+                        else:
+                            print("警告：未能从electrek.co新闻列表页提取到新闻")
+                        # 同时也提取链接，保持原有功能
+                        soup = BeautifulSoup(html_content, 'html.parser')
+                        for a_tag in soup.find_all('a', href=True):
+                            href = a_tag['href']
+                            # 只处理electrek.co的链接
+                            if 'electrek.co' in href or href.startswith('/'):
+                                # 处理不同类型的链接
+                                if href.startswith('http'):
+                                    links.append(href)
+                                elif href.startswith('//'):
+                                    # 处理以//开头的协议相对链接
+                                    links.append('https:' + href)
+                                elif href.startswith('/') and not href.startswith('//'):
+                                    # 处理以/开头的绝对路径链接
+                                    base_url = plist['WebMainResource']['WebResourceURL']
+                                    parsed = base_url.split('/')
+                                    if len(parsed) >= 3:
+                                        links.append(f"{parsed[0]}//{parsed[2]}{href}")
                     else:
                         # 非autohome新闻列表页，使用原有逻辑
                         soup = BeautifulSoup(html_content, 'html.parser')
@@ -738,6 +901,9 @@ def extract_news_content(url):
         # 检查是否是autonews.com网站
         is_autonews = 'autonews.com' in url.lower()
 
+        # 检查是否是electrek.co网站
+        is_electrek = 'electrek.co' in url.lower()
+
         # 尝试提取标题
         title = None
         if is_autonews:
@@ -790,6 +956,43 @@ def extract_news_content(url):
                             title = None
 
             # 对于autonews.com网站，如果标题为空或未知，则跳过这条新闻
+            if not title or title == "未知标题":
+                return None
+        elif is_electrek:
+            # electrek.co网站的标题提取逻辑
+            # 首先尝试从meta标签中提取标题
+            meta_title = soup.find('meta', property='og:title')
+            if meta_title and meta_title.get('content'):
+                title = meta_title['content'].strip()
+
+            # 如果没有从meta标签获取到标题，尝试从h1标签提取
+            if not title:
+                h1_tags = soup.find_all('h1')
+                if h1_tags:
+                    for h1_tag in h1_tags:
+                        title_text = h1_tag.get_text().strip()
+                        excluded_keywords = [
+                            'Subscribe', 'Log in', 'Sign up', 'Menu', 'Search',
+                            'About', 'Contact', 'Advertise', 'Privacy', 'Terms',
+                            'Newsletter', 'Follow us', 'Most Popular', 'Guides',
+                            'Home', 'Electric Vehicle', 'EV', 'Solar', 'Battery'
+                        ]
+                        if title_text and len(title_text) > 10 and not any(keyword.lower() in title_text.lower() for keyword in excluded_keywords):
+                            title = title_text
+                            break
+
+            # 如果没有找到标题，尝试其他选择器
+            if not title:
+                title_selectors = ['.article-title', '.news-title', '.title', 'h2']
+                for selector in title_selectors:
+                    title_elem = soup.select_one(selector)
+                    if title_elem:
+                        title_text = title_elem.get_text().strip()
+                        if title_text and len(title_text) > 5:
+                            title = title_text
+                            break
+
+            # 对于electrek.co网站，如果标题为空或未知，则跳过这条新闻
             if not title or title == "未知标题":
                 return None
         elif is_autohome:
@@ -997,6 +1200,63 @@ def extract_news_content(url):
                             '%Y-%m-%dT%H:%M:%S',
                             '%Y-%m-%d %H:%M'
                         ]
+                        for fmt in time_formats:
+                            try:
+                                dt = datetime.strptime(time_str, fmt)
+                                news_time = dt.strftime('%Y-%m-%d %H:%M')
+                                break
+                            except:
+                                continue
+                    except:
+                        pass
+        elif is_electrek:
+            # electrek.co网站的时间提取逻辑
+            # 首先尝试从meta标签中提取时间
+            meta_time = soup.find('meta', property='article:published_time')
+            if meta_time and meta_time.get('content'):
+                time_text = meta_time['content'].strip()
+                try:
+                    dt = datetime.fromisoformat(time_text.replace('Z', '+00:00'))
+                    news_time = dt.strftime('%Y-%m-%d %H:%M')
+                except:
+                    pass
+
+            # 尝试从time标签中提取
+            if news_time == "未知时间":
+                time_tag = soup.find('time')
+                if time_tag:
+                    datetime_attr = time_tag.get('datetime')
+                    if datetime_attr:
+                        try:
+                            dt = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
+                            news_time = dt.strftime('%Y-%m-%d %H:%M')
+                        except:
+                            pass
+                    if news_time == "未知时间":
+                        time_text = time_tag.get_text().strip()
+                        if time_text and re.search(r'\d{4}', time_text):
+                            news_time = time_text
+
+            # 尝试从span.meta__post-date提取
+            if news_time == "未知时间":
+                date_span = soup.find('span', class_='meta__post-date')
+                if date_span:
+                    news_time = date_span.get_text().strip()
+
+            # 尝试从URL中提取日期（格式：/2026/05/15/）
+            if news_time == "未知时间" or 'ago' in news_time.lower():
+                date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', url)
+                if date_match:
+                    news_time = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+
+            # 尝试从HTML源码中提取ISO格式时间
+            if news_time == "未知时间":
+                html_content_str = str(soup)
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2}[T\s]\d{1,2}:\d{1,2}:\d{1,2})', html_content_str)
+                if date_match:
+                    time_str = date_match.group(1)
+                    try:
+                        time_formats = ['%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S']
                         for fmt in time_formats:
                             try:
                                 dt = datetime.strptime(time_str, fmt)
@@ -1350,6 +1610,43 @@ def extract_news_content(url):
                             content = None
                     else:
                         content = None
+        elif is_electrek:
+            # electrek.co网站的内容提取逻辑
+            content_selectors = [
+                '.article-content', '.post-content', '.entry-content',
+                'article .content', '.article__body', '.post-body',
+                'article', '.main-content'
+            ]
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    # 移除脚本和样式标签
+                    for script in content_elem(["script", "style"]):
+                        script.extract()
+
+                    # 定义需要移除的class和id
+                    remove_selectors = [
+                        '.nav', '.navigation', '.header', '.footer',
+                        '.sidebar', '.related', '.recommend', '.tags',
+                        '.author-info', '.share', '.comment', '.ad',
+                        '#footer', '#header', '#nav', '#sidebar',
+                        '.article-tags', '.article-footer', '.related-news',
+                        '.newsletter', '.subscribe-box', '.trending',
+                        '.most-popular', '.social-share', '.post-meta',
+                        '.article__meta-guides', '.article__share'
+                    ]
+
+                    # 移除不需要的元素
+                    for remove_selector in remove_selectors:
+                        for elem in content_elem.select(remove_selector):
+                            elem.extract()
+
+                    content = content_elem.get_text(separator='\n').strip()
+                    # 验证内容有效性
+                    if content and len(content) > 100:
+                        break
+                    else:
+                        content = None
         elif is_gasgoo:
             # gasgoo网站的内容在#ArticleContent或.contentDetailed中
             content_elem = soup.select_one('#ArticleContent') or soup.select_one('.contentDetailed')
@@ -1482,7 +1779,12 @@ def save_news_to_file(news_list, output_file):
                 'Return to homepage',
                 'Footer',
                 'About Us',
-                'Advertise'
+                'Advertise',
+                'Subscribe to Electrek',
+                'FTC: We use income earning auto affiliate links',
+                'More from Electrek',
+                'Comments',
+                'Guides'
             ]
 
             # 只在内容的最后1/3长度范围内查找footer_keywords
@@ -1675,6 +1977,11 @@ def main():
     if autonews_news_from_list:
         print(f"从内存缓存中获取了 {len(autonews_news_from_list)} 条从autonews列表页提取的新闻")
 
+    # 从全局缓存中获取electrek列表页新闻
+    electrek_news_from_list = _electrek_list_cache[:]
+    if electrek_news_from_list:
+        print(f"从内存缓存中获取了 {len(electrek_news_from_list)} 条从electrek列表页提取的新闻")
+
     # 去重
     all_links = list(set(all_links))
     print(f"总共找到 {len(all_links)} 个唯一链接")
@@ -1739,6 +2046,22 @@ def main():
                     print(f"跳过autonews新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
             else:
                 print(f"跳过重复的autonews新闻: {news.get('title', '未知标题')}")
+
+    # 将从electrek列表页提取的新闻添加到主新闻列表
+    if electrek_news_from_list:
+        print(f"\n添加 {len(electrek_news_from_list)} 条从electrek列表页提取的新闻到主列表...")
+        # 去重：检查URL是否已存在
+        existing_urls = {news.get('url') for news in news_list}
+        for news in electrek_news_from_list:
+            if news.get('url') not in existing_urls:
+                # 检查新闻时间是否符合过滤条件
+                if is_news_after_time(news.get('time'), time_filter):
+                    news_list.append(news)
+                    existing_urls.add(news.get('url'))
+                else:
+                    print(f"跳过electrek新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
+            else:
+                print(f"跳过重复的electrek新闻: {news.get('title', '未知标题')}")
 
     output_file = os.path.join(work_dir, f"news_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
     print(f"正在保存结果到 '{output_file}'...")
