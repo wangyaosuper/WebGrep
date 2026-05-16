@@ -239,35 +239,20 @@ def extract_news_from_electrek_list(html_content, time_filter=None):
             print(f"[{index}/{len(articles)}] 标题: {title}")
             print(f"[{index}/{len(articles)}] 时间: {news_time}")
 
-            # 获取新闻完整内容
-            full_content = ""
-            try:
-                news_data = extract_news_content(url)
-                if news_data and news_data.get('content'):
-                    full_content = news_data['content']
-                    if news_data.get('time') and news_data.get('time') != "未知时间":
-                        news_time = news_data['time']
-                    if news_data.get('title') and news_data.get('title') != "未知标题":
-                        title = news_data['title']
-            except Exception as e:
-                print(f"获取新闻内容时出错: {str(e)}")
-                full_content = "无法获取完整内容"
+            # 缓存列表页提取的元信息，后续由统一线程池获取内容时合并
+            with _cache_lock:
+                _list_page_meta_cache[url] = {
+                    'title': title or "未知标题",
+                    'time': news_time,
+                    'summary': summary
+                }
 
-            # 组合摘要和完整内容
-            content = ""
-            if summary:
-                content = summary
-            if full_content and full_content != "无法获取完整内容":
-                if content:
-                    content = content + "\n" + full_content
-                else:
-                    content = full_content
-
+            # 只记录元信息，不在此处获取完整内容（由统一线程池并行获取）
             news_list.append({
                 'title': title or "未知标题",
                 'time': news_time,
                 'url': url,
-                'content': content or "无摘要"
+                'content': summary or "无摘要"  # 暂用摘要，后续由线程池补充完整内容
             })
         except Exception as e:
             continue
@@ -408,44 +393,20 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
             print(f"[{index}/{len(news_links)}] 标题: {title}")
             print(f"[{index}/{len(news_links)}] 时间: {news_time}")
 
-            # 检查新闻时间是否符合过滤条件
-            #if not is_news_after_time(news_time, time_filter):
-            #    print(f"[{index}/{len(news_links)}] 跳过（时间早于过滤时间）")
-            #    continue
-            #print(f"[{index}/{len(news_links)}] （时间符合条件）")
-            # 获取新闻完整内容
-            full_content = ""
-            try:
-                # 使用extract_news_content函数获取完整内容
-                news_data = extract_news_content(url)
-                if news_data and news_data.get('content'):
-                    full_content = news_data['content']
-                    # 如果extract_news_content没有提取到时间，使用从列表页提取的时间
-                    if news_data.get('time') and news_data.get('time') != "未知时间":
-                        news_time = news_data['time']
-                    # 如果extract_news_content没有提取到标题，使用从列表页提取的标题
-                    if news_data.get('title') and news_data.get('title') != "未知标题":
-                        title = news_data['title']
-            except Exception as e:
-                print(f"获取新闻内容时出错: {str(e)}")
-                full_content = "无法获取完整内容"
+            # 缓存列表页提取的元信息，后续由统一线程池获取内容时合并
+            with _cache_lock:
+                _list_page_meta_cache[url] = {
+                    'title': title or "未知标题",
+                    'time': news_time,
+                    'summary': summary
+                }
 
-            # 组合列表页摘要和完整文章内容
-            content = ""
-            # 只有当摘要与标题不同且长度足够时，才使用列表页的摘要
-            if summary:
-                content = summary
-            if full_content and full_content != "无法获取完整内容":
-                if content:
-                    content = content + full_content
-                else:
-                    content = full_content
-
+            # 只记录元信息，不在此处获取完整内容（由统一线程池并行获取）
             news_list.append({
                 'title': title or "未知标题",
                 'time': news_time,
                 'url': url,
-                'content': content or "无摘要"
+                'content': summary or "无摘要"  # 暂用摘要，后续由线程池补充完整内容
             })
         except Exception as e:
             continue
@@ -453,6 +414,16 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
     # 方法2：如果方法1没有找到新闻，尝试从h2、h3标签中提取
     if not news_list:
         print("抓取Auto News网站新闻，方法1没有找到新闻，尝试方法2...")
+        print("!!!!!方法2应该从来不会被用到，断言、退出！！！！！！ exit()")
+        exit()
+        assert False, "方法2不应该被用到，断言、退出！！！！！！"
+
+        for heading_tag in soup.find_all(['h2', 'h3']):
+            try:
+                # 先尝试在h2/h3标签内查找a标签
+                link_tag = heading_tag.find('a', href=True)
+
+                # 如果h2/h3标签内没有a标签，尝试在父元素中查找
         for heading_tag in soup.find_all(['h2', 'h3']):
             try:
                 # 先尝试在h2/h3标签内查找a标签
@@ -478,11 +449,16 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
                 url = link_tag['href']
                 if url.startswith('//'):
                     url = 'https:' + url
+                elif url.startswith('/'):
+                    url = 'https://www.autonews.com' + url
                 elif not url.startswith('http'):
                     continue
 
                 # 检查URL是否符合autonews.com新闻链接的模式
-                if '/news/' not in url:
+                # 匹配包含/news/路径，或包含an-/ane-/anc-等文章标识的URL
+                has_news_path = '/news/' in url
+                has_article_id = bool(re.search(r'/an[a-z]*-', url))
+                if not has_news_path and not has_article_id:
                     continue
 
                 # 排除列表页本身
@@ -493,9 +469,10 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
                 if re.search(r'[?&]page=', url):
                     continue
 
-                # 只保留看起来像新闻文章的链接
-                if not re.search(r'/news/\d+/', url) and not re.search(r'/news/[a-z0-9-]+', url):
-                    continue
+                # 只保留看起来像新闻文章的链接（有文章标识的已确认是文章，无需额外检查）
+                if has_news_path and not has_article_id:
+                    if not re.search(r'/news/\d+/', url) and not re.search(r'/news/[a-z0-9-]+', url):
+                        continue
 
                 # 去重
                 if url in seen_urls:
@@ -552,38 +529,20 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
                                 news_time = text
                                 break
 
-                # 获取新闻完整内容
-                full_content = ""
-                try:
-                    # 使用extract_news_content函数获取完整内容
-                    news_data = extract_news_content(url)
-                    if news_data and news_data.get('content'):
-                        full_content = news_data['content']
-                        # 如果extract_news_content没有提取到时间，使用从列表页提取的时间
-                        if news_data.get('time') and news_data.get('time') != "未知时间":
-                            news_time = news_data['time']
-                        # 如果extract_news_content没有提取到标题，使用从列表页提取的标题
-                        if news_data.get('title') and news_data.get('title') != "未知标题":
-                            title = news_data['title']
-                except Exception as e:
-                    print(f"获取新闻内容时出错: {str(e)}")
-                    full_content = "无法获取完整内容"
+                # 缓存列表页提取的元信息，后续由统一线程池获取内容时合并
+                with _cache_lock:
+                    _list_page_meta_cache[url] = {
+                        'title': title or "未知标题",
+                        'time': news_time,
+                        'summary': summary
+                    }
 
-                # 组合列表页摘要和完整文章内容
-                content = ""
-                if summary:
-                    content = summary
-                if full_content and full_content != "无法获取完整内容":
-                    if content:
-                        content = content + full_content
-                    else:
-                        content = full_content
-
+                # 只记录元信息，不在此处获取完整内容（由统一线程池并行获取）
                 news_list.append({
                     'title': title or "未知标题",
                     'time': news_time,
                     'url': url,
-                    'content': content or "无摘要"
+                    'content': summary or "无摘要"  # 暂用摘要，后续由线程池补充完整内容
                 })
             except Exception as e:
                 continue
@@ -710,6 +669,63 @@ def is_news_link(url):
         if site in url_lower:
             return False
 
+    # 针对autonews.com网站的特殊处理（需在通用过滤之前，避免被"以/结尾"等规则误过滤）
+    if 'autonews.com' in url_lower:
+        # autonews.com的新闻链接有多种模式：
+        # 1. /news/数字/文章标题
+        # 2. /品牌或分类/an-或ane-文章标题
+        # 3. /events/congress/文章标题
+        # 例如：/news/12345/article-title
+        # 例如：/volkswagen/ane-vw-labor-leaders-red-lines-plant-closures-0515/
+        # 例如：/mercedes-benz/an-2027-mercedes-glc-ev-reviews-0505/
+        # 例如：/technology/ane-ai-agents-sdv-llms-entertainment-0515/
+
+        # 排除包含分页参数的链接
+        if re.search(r'[?&]page=', url_lower):
+            return False
+        # 排除包含查询参数的链接（除了可能的跟踪参数）
+        if '?' in url_lower and not re.search(r'[?&](ref|share|fbclid|utm_source)=', url_lower):
+            return False
+        # 排除下载链接
+        if '/download' in url_lower or '/pdf' in url_lower or '/excel' in url_lower:
+            return False
+        # 排除报告页面
+        if '/top-150' in url_lower or '/data-center' in url_lower:
+            return False
+        # 排除列表页本身（以/news/等分类路径结尾）
+        if re.search(r'/news/?$', url_lower) or re.search(r'/events/?$', url_lower):
+            return False
+
+        # 检查是否包含文章标识（如an-或ane-），这是autonews文章最可靠的特征
+        if re.search(r'/an[a-z]*-', url_lower):
+            return True
+        # 检查是否包含日期模式（如-0505/）
+        if re.search(r'-\d{4}/$', url_lower):
+            return True
+        # 检查/news/数字/路径模式
+        if re.search(r'/news/\d+/', url_lower):
+            return True
+        # 检查是否包含congress
+        if 'congress' in url_lower:
+            return True
+
+        # 其他autonews.com链接不认为是新闻
+        return False
+
+    # 针对electrek.co网站的特殊处理（需在通用过滤之前，避免被"以/结尾"等规则误过滤）
+    if 'electrek.co' in url_lower:
+        # electrek.co的新闻链接格式：/年/月/日/英文slug/
+        # 例如：/2026/05/15/rivian-r2-configurator-live-pricing-options/
+        # 也可能带有 #more-xxx 或 ?extended-comments=1#comments 等后缀
+        # 先去掉查询参数和锚点再匹配
+        url_path = url_lower.split('?')[0].split('#')[0]
+        if re.search(r'/\d{4}/\d{2}/\d{2}/[a-z0-9-]+/?$', url_path):
+            return True
+        # 排除guides、pages等非新闻链接
+        if any(path in url_lower for path in ['/guides/', '/page/', '/author/', '/about/', '/contact/', '/advertise/', '/privacy/', '/terms/', '/category/', '/tag/']):
+            return False
+        return False
+
     # 排除首页链接（以/结尾或没有路径）
     if url_lower.endswith('/') or re.search(r'https?://[^/]+/?$', url_lower):
         return False
@@ -734,63 +750,6 @@ def is_news_link(url):
         if any(path in url_lower for path in ['/bestauto/', '/chejiahao/', '/v.', '/hangye/list/']):
             return False
 
-    # 针对autonews.com网站的特殊处理
-    if 'autonews.com' in url_lower:
-        # autonews.com的新闻链接有多种模式：
-        # 1. /news/ 或 /news/数字/文章标题
-        # 2. /events/congress/文章标题
-        # 3. /品牌/an-文章标题
-        # 4. /分类/an-文章标题
-        # 例如：/news/ 或 /news/12345/article-title
-        # 例如：/events/congress/ane-congress-2026-severinson-volvo-0505/
-        # 例如：/mercedes-benz/an-2027-mercedes-glc-ev-reviews-0505/
-
-        # 检查是否包含常见的新闻路径模式
-        news_paths = ['/news/', '/events/', '/retail/', '/manufacturing/', '/toyota/', '/mercedes-benz/', 
-                   '/honda/', '/stellantis/', '/volvo/', '/general-motors/', '/ford/', '/hyundai/']
-        for path in news_paths:
-            if path in url_lower:
-                # 排除列表页本身
-                if url_lower.endswith(path) or url_lower.endswith(path.rstrip('/') + '/'):
-                    return False
-                # 排除包含分页参数的链接
-                if re.search(r'[?&]page=', url_lower):
-                    return False
-                # 排除包含查询参数的链接（除了可能的跟踪参数）
-                if '?' in url_lower and not re.search(r'[?&](ref|share|fbclid|utm_source)=', url_lower):
-                    return False
-                # 排除下载链接
-                if '/download' in url_lower or '/pdf' in url_lower or '/excel' in url_lower:
-                    return False
-                # 排除报告页面
-                if '/top-150' in url_lower or '/data-center' in url_lower:
-                    return False
-                # 检查是否包含文章标识（如an-或ane-）
-                if re.search(r'/an[a-z]*-\d{4}', url_lower):
-                    return True
-                # 检查是否包含日期模式（如-0505）
-                if re.search(r'-\d{4}/$', url_lower):
-                    return True
-                # 检查是否包含congress
-                if 'congress' in url_lower:
-                    return True
-                return True
-        return False
-
-    # 针对electrek.co网站的特殊处理
-    if 'electrek.co' in url_lower:
-        # electrek.co的新闻链接格式：/年/月/日/英文slug/
-        # 例如：/2026/05/15/rivian-r2-configurator-live-pricing-options/
-        # 也可能带有 #more-xxx 或 ?extended-comments=1#comments 等后缀
-        # 先去掉查询参数和锚点再匹配
-        url_path = url_lower.split('?')[0].split('#')[0]
-        if re.search(r'/\d{4}/\d{2}/\d{2}/[a-z0-9-]+/?$', url_path):
-            return True
-        # 排除guides、pages等非新闻链接
-        if any(path in url_lower for path in ['/guides/', '/page/', '/author/', '/about/', '/contact/', '/advertise/', '/privacy/', '/terms/', '/category/', '/tag/']):
-            return False
-        return False
-
     # 只保留看起来像新闻文章的链接
     # 新闻链接通常包含数字或特定的路径模式
     # 检查URL是否包含数字，这通常是新闻文章的特征
@@ -810,6 +769,10 @@ def is_news_link(url):
 _autonews_list_cache = []
 # 全局变量，用于在extract_links_from_webarchive和主函数之间传递electrek列表页新闻
 _electrek_list_cache = []
+# 全局字典，缓存从列表页提取的元信息（标题、摘要、时间），key=URL
+_list_page_meta_cache = {}
+# 全局锁，用于保护缓存列表的并发写入
+_cache_lock = threading.Lock()
 
 def extract_links_from_webarchive(filename, time_filter=None):
     """从webarchive文件中提取所有URL链接"""
@@ -896,42 +859,23 @@ def extract_links_from_webarchive(filename, time_filter=None):
                         print("检测到autonews.com新闻列表页，直接提取新闻信息...")
                         news_list = extract_news_from_autonews_list(html_content, time_filter)
                         if news_list:
-                            # 将新闻信息存入全局缓存，避免生成临时文件
-                            _autonews_list_cache.extend(news_list)
-                            print(f"已从autonews.com新闻列表页提取 {len(news_list)} 条新闻并缓存到内存")
+                            # 元信息已缓存到_list_page_meta_cache，将URL添加到links由统一线程池获取内容
+                            for news in news_list:
+                                links.append(news['url'])
+                            print(f"已从autonews.com新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
                         else:
                             print("警告：未能从autonews.com新闻列表页提取到新闻，可能是因为新闻内容是通过JavaScript动态加载的")
-                        # 同时也提取链接，保持原有功能
-                        soup = BeautifulSoup(html_content, 'html.parser')
-                        for a_tag in soup.find_all('a', href=True):
-                            href = a_tag['href']
-                            # 只处理autonews.com的链接
-                            if 'autonews.com' in href or href.startswith('/'):
-                                # 处理不同类型的链接
-                                if href.startswith('http'):
-                                    links.append(href)
-                                elif href.startswith('//'):
-                                    # 处理以//开头的协议相对链接
-                                    links.append('https:' + href)
-                                elif href.startswith('/') and not href.startswith('//'):
-                                    # 处理以/开头的绝对路径链接
-                                    base_url = plist['WebMainResource']['WebResourceURL']
-                                    parsed = base_url.split('/')
-                                    if len(parsed) >= 3:
-                                        links.append(f"{parsed[0]}//{parsed[2]}{href}")
                     # 如果是electrek.co新闻列表页，直接提取新闻信息
                     elif is_electrek_list:
                         print("检测到electrek.co新闻列表页，直接提取新闻信息...")
                         news_list = extract_news_from_electrek_list(html_content, time_filter)
                         if news_list:
-                            # 将新闻信息存入全局缓存，避免生成临时文件
-                            _electrek_list_cache.extend(news_list)
-                            print(f"已从electrek.co新闻列表页提取 {len(news_list)} 条新闻并缓存到内存")
+                            # 元信息已缓存到_list_page_meta_cache，将URL添加到links由统一线程池获取内容
+                            for news in news_list:
+                                links.append(news['url'])
+                            print(f"已从electrek.co新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
                         else:
                             print("警告：未能从electrek.co新闻列表页提取到新闻")
-                        # electrek列表页已经通过extract_news_from_electrek_list获取了完整新闻内容
-                        # 不再提取链接，避免与缓存新闻重复（同一文章的#more-xxx和?comments变体会导致重复）
-                        print("electrek.co列表页新闻已缓存，跳过链接提取以避免重复")
                     else:
                         # 非autohome新闻列表页，使用原有逻辑
                         soup = BeautifulSoup(html_content, 'html.parser')
@@ -1896,7 +1840,27 @@ def process_link(link, index, total, lock):
     """处理单个链接的函数，用于多线程"""
     with lock:
         print(f"正在处理第 {index}/{total} 个链接: {link}")
-    return extract_news_content(link)
+    news = extract_news_content(link)
+
+    # 检查是否有列表页缓存的元信息，如果有则合并
+    with _cache_lock:
+        meta = _list_page_meta_cache.get(link)
+    if meta and news:
+        # 如果列表页有摘要且extract_news_content没有提取到内容，使用列表页摘要
+        summary = meta.get('summary', '')
+        if summary and (not news.get('content') or news.get('content') in ("无法提取内容", "无摘要")):
+            news['content'] = summary
+        elif summary and news.get('content') and news.get('content') not in ("无法提取内容", "无摘要"):
+            # 组合列表页摘要和完整文章内容
+            news['content'] = summary + news['content']
+        # 如果extract_news_content没有提取到时间，使用列表页的时间
+        if (not news.get('time') or news.get('time') == "未知时间") and meta.get('time'):
+            news['time'] = meta['time']
+        # 如果extract_news_content没有提取到标题，使用列表页的标题
+        if (not news.get('title') or news.get('title') == "未知标题") and meta.get('title'):
+            news['title'] = meta['title']
+
+    return news
 
 def find_webarchive_files(directory):
     """遍历目录，查找所有.webarchive文件"""
@@ -2049,29 +2013,36 @@ def main():
             print(f"错误: 文件 '{input_file}' 不存在")
             return
 
-    # 从所有文件中提取链接
+    # 从所有文件中并行提取链接（多个webarchive文件可同时处理，AutoNews/electrek不会阻塞其他网站）
     all_links = []
-    for input_file in input_files:
-        print(f"正在从文件 '{input_file}' 中提取链接...")
-        links = extract_links_from_file(input_file, time_filter)
-        print(f"从 '{input_file}' 找到 {len(links)} 个链接")
-        all_links.extend(links)
-
-    # 从全局缓存中获取autonews列表页新闻
-    autonews_news_from_list = _autonews_list_cache[:]
-    if autonews_news_from_list:
-        print(f"从内存缓存中获取了 {len(autonews_news_from_list)} 条从autonews列表页提取的新闻")
-
-    # 从全局缓存中获取electrek列表页新闻
-    electrek_news_from_list = _electrek_list_cache[:]
-    if electrek_news_from_list:
-        print(f"从内存缓存中获取了 {len(electrek_news_from_list)} 条从electrek列表页提取的新闻")
+    if len(input_files) > 1:
+        # 多个文件时使用线程池并行处理
+        with ThreadPoolExecutor(max_workers=min(len(input_files), 5)) as executor:
+            file_futures = {
+                executor.submit(extract_links_from_file, input_file, time_filter): input_file
+                for input_file in input_files
+            }
+            for future in as_completed(file_futures):
+                input_file = file_futures[future]
+                try:
+                    links = future.result()
+                    print(f"从 '{input_file}' 找到 {len(links)} 个链接")
+                    all_links.extend(links)
+                except Exception as e:
+                    print(f"处理文件 '{input_file}' 时出错: {str(e)}")
+    else:
+        # 单个文件直接处理
+        for input_file in input_files:
+            print(f"正在从文件 '{input_file}' 中提取链接...")
+            links = extract_links_from_file(input_file, time_filter)
+            print(f"从 '{input_file}' 找到 {len(links)} 个链接")
+            all_links.extend(links)
 
     # 去重
     all_links = list(set(all_links))
     print(f"总共找到 {len(all_links)} 个唯一链接")
 
-    # 使用线程池并行处理链接
+    # 使用线程池并行处理链接（AutoNews/electrek的新闻URL也已加入，与其他网站同时并行获取内容）
     news_list = []
     failed_count = 0  # 统计失败的链接数量
 
@@ -2098,12 +2069,27 @@ def main():
                     if news and news.get('title') == "获取失败":
                         failed_count += 1
                         # 不再将失败的新闻写入输出文件
+                        reason = news.get('content', '未知原因')
                         print(f"跳过失败链接: {link}")
+                        print(f"  标题: {news.get('title', '未知标题')}")
+                        print(f"  时间: {news.get('time', '未知时间')}")
+                        print(f"  链接: {link}")
+                        print(f"  失败原因: {reason}")
                     elif news:
                         # 检查内容是否为"无法提取内容"或"未知标题"
                         if news.get('content') == "无法提取内容" or news.get('title') == "未知标题":
                             failed_count += 1
-                            print(f"跳过无效新闻（标题或内容无效）: {link}")
+                            reason_parts = []
+                            if news.get('title') == "未知标题":
+                                reason_parts.append("标题未知")
+                            if news.get('content') == "无法提取内容":
+                                reason_parts.append("内容无法提取")
+                            reason = "、".join(reason_parts)
+                            print(f"跳过无效新闻: {link}")
+                            print(f"  标题: {news.get('title', '未知标题')}")
+                            print(f"  时间: {news.get('time', '未知时间')}")
+                            print(f"  链接: {link}")
+                            print(f"  失败原因: {reason}")
                         # 检查新闻时间是否符合过滤条件
                         elif is_news_after_time(news.get('time'), time_filter):
                             news_list.append(news)
@@ -2111,50 +2097,17 @@ def main():
                             print(f"跳过新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
                 except Exception as e:
                     failed_count += 1
-                    print(f"处理链接 {link} 时出错: {str(e)}")
+                    print(f"处理链接出错: {link}")
+                    print(f"  失败原因: {str(e)}")
     else:
-        if not autonews_news_from_list and not electrek_news_from_list:
-            print("未找到任何链接，也没有缓存新闻")
-            return
-        print("未找到需要单独抓取的链接，但有缓存新闻，继续处理缓存...")
+        print("未找到任何链接")
+        return
 
     # 保存到文件
     # 创建work目录（如果不存在）
     work_dir = "work"
     if not os.path.exists(work_dir):
         os.makedirs(work_dir)
-
-    # 将从autonews列表页提取的新闻添加到主新闻列表
-    if autonews_news_from_list:
-        print(f"\n添加 {len(autonews_news_from_list)} 条从autonews列表页提取的新闻到主列表...")
-        # 去重：检查URL是否已存在
-        existing_urls = {news.get('url') for news in news_list}
-        for news in autonews_news_from_list:
-            if news.get('url') not in existing_urls:
-                # 检查新闻时间是否符合过滤条件
-                if is_news_after_time(news.get('time'), time_filter):
-                    news_list.append(news)
-                    existing_urls.add(news.get('url'))
-                else:
-                    print(f"跳过autonews新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
-            else:
-                print(f"跳过重复的autonews新闻: {news.get('title', '未知标题')}")
-
-    # 将从electrek列表页提取的新闻添加到主新闻列表
-    if electrek_news_from_list:
-        print(f"\n添加 {len(electrek_news_from_list)} 条从electrek列表页提取的新闻到主列表...")
-        # 去重：检查URL是否已存在
-        existing_urls = {news.get('url') for news in news_list}
-        for news in electrek_news_from_list:
-            if news.get('url') not in existing_urls:
-                # 检查新闻时间是否符合过滤条件
-                if is_news_after_time(news.get('time'), time_filter):
-                    news_list.append(news)
-                    existing_urls.add(news.get('url'))
-                else:
-                    print(f"跳过electrek新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
-            else:
-                print(f"跳过重复的electrek新闻: {news.get('title', '未知标题')}")
 
     output_file = os.path.join(work_dir, f"news_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
     print(f"正在保存结果到 '{output_file}'...")
