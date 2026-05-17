@@ -416,14 +416,7 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
         print("抓取Auto News网站新闻，方法1没有找到新闻，尝试方法2...")
         print("!!!!!方法2应该从来不会被用到，断言、退出！！！！！！ exit()")
         exit()
-        assert False, "方法2不应该被用到，断言、退出！！！！！！"
-
-        for heading_tag in soup.find_all(['h2', 'h3']):
-            try:
-                # 先尝试在h2/h3标签内查找a标签
-                link_tag = heading_tag.find('a', href=True)
-
-                # 如果h2/h3标签内没有a标签，尝试在父元素中查找
+        assert False, "方法2不应该被用到，如果看到此断言说明方法1有遗漏，需要排查！"
         for heading_tag in soup.find_all(['h2', 'h3']):
             try:
                 # 先尝试在h2/h3标签内查找a标签
