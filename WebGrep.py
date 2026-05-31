@@ -12,6 +12,7 @@ import base64
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import subprocess
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 
@@ -2124,6 +2125,40 @@ def main():
             print("文件中未找到任何新闻条目，跳过统计报告生成。")
     except Exception as e:
         print(f"生成统计报告时出错: {e}")
+
+    # ===== 新闻去重处理 =====
+    print("\n" + "=" * 50)
+    print("正在进行新闻去重处理...")
+    print("=" * 50)
+    try:
+        # 生成去重后的文件名: dedup_news_output_20260524_061528.txt
+        base_name = os.path.basename(output_file)  # news_output_20260524_061528.txt
+        dedup_name = base_name.replace("news_output_", "dedup_news_output_")
+        dedup_output_file = os.path.join(os.path.dirname(output_file), dedup_name)
+
+        # 通过 subprocess 调用 DeduplicateNews.py 脚本进行去重
+        dedup_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeduplicateNews.py")
+        result = subprocess.run(
+            [sys.executable, dedup_script, output_file, "-o", dedup_output_file],
+            capture_output=False,
+            text=True
+        )
+
+        if result.returncode == 0 and os.path.exists(dedup_output_file):
+            # 对去重后的文件再次生成 OutputReport，方便前后对比
+            print("\n" + "=" * 50)
+            print("正在生成去重后文件的统计报告（用于对比）...")
+            print("=" * 50)
+            dedup_report_news_list = parse_news_file(dedup_output_file)
+            if dedup_report_news_list:
+                dedup_report_analysis = analyze_news(dedup_report_news_list)
+                generate_report(dedup_output_file, dedup_report_analysis)
+            else:
+                print("去重后文件中未找到任何新闻条目，跳过统计报告生成。")
+        elif not os.path.exists(dedup_output_file):
+            print("未发现重复新闻，去重文件未生成。")
+    except Exception as e:
+        print(f"新闻去重处理时出错: {e}")
 
 if __name__ == "__main__":
     main()
