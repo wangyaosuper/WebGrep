@@ -3,7 +3,7 @@ import sys
 import os
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import time
 import random
@@ -1865,7 +1865,7 @@ def find_webarchive_files(directory):
                 webarchive_files.append(os.path.join(root, file))
     return webarchive_files
 
-def parse_time_filter(time_str):
+def parse_time_filter(time_str, end_of_day=False):
     """解析时间过滤参数，返回datetime对象"""
     if not time_str:
         return None
@@ -1878,7 +1878,10 @@ def parse_time_filter(time_str):
 
     # 尝试解析只有日期的格式：YYYY-MM-DD
     try:
-        return datetime.strptime(time_str, '%Y-%m-%d')
+        parsed_time = datetime.strptime(time_str, '%Y-%m-%d')
+        if end_of_day:
+            return parsed_time + timedelta(days=1) - timedelta(microseconds=1)
+        return parsed_time
     except ValueError:
         pass
 
@@ -1917,6 +1920,38 @@ def is_news_after_time(news_time_str, filter_time):
     # 比较时间
     return news_time >= filter_time
 
+def is_news_before_time(news_time_str, filter_time):
+    """判断新闻时间是否在过滤时间之前"""
+    if not filter_time:
+        return True  # 没有设置过滤时间，返回True
+
+    if not news_time_str or news_time_str == "未知时间":
+        return True  # 时间未知，默认保留
+
+    # 尝试解析新闻时间
+    news_time = None
+    time_formats = [
+        '%Y-%m-%d %H:%M:%S',  # 支持gasgoo网站的时间格式（包含秒）
+        '%Y-%m-%d %H:%M',
+        '%Y-%m-%d',
+        '%Y年%m月%d日',
+        '%Y/%m/%d',
+        '%Y/%m/%d %H:%M'
+    ]
+
+    for fmt in time_formats:
+        try:
+            news_time = datetime.strptime(news_time_str, fmt)
+            break
+        except ValueError:
+            continue
+
+    if not news_time:
+        return True  # 无法解析时间，默认保留
+
+    # 比较时间
+    return news_time <= filter_time
+
 def show_help():
     """显示帮助信息"""
     help_text = """
@@ -1926,12 +1961,14 @@ WebGrep - 从webarchive文件中提取新闻内容
   python WebGrep.py <文件1> [文件2] [文件3] ...
   python WebGrep.py --dir <目录>
   python WebGrep.py --after <日期时间>
+  python WebGrep.py --before <日期时间>
   python WebGrep.py --help
 
 参数说明:
   <文件1> [文件2] [文件3] ...  指定一个或多个webarchive文件
   --dir <目录>                  指定包含webarchive文件的目录，脚本会自动遍历该目录及其子目录中的所有.webarchive文件
   --after <日期时间>            只抓取指定时间之后的新闻，格式：YYYY-MM-DD HH:MM 或 YYYY-MM-DD
+  --before <日期时间>           只抓取指定时间及之前的新闻，格式：YYYY-MM-DD HH:MM 或 YYYY-MM-DD
   --help                        显示此帮助信息
 
 示例:
@@ -1939,6 +1976,8 @@ WebGrep - 从webarchive文件中提取新闻内容
   python WebGrep.py --dir /path/to/webarchives
   python WebGrep.py --after "2025-01-01 00:00"
   python WebGrep.py --after "2025-01-01"
+  python WebGrep.py --before "2025-01-01 23:59"
+  python WebGrep.py --before "2025-01-01"
   python WebGrep.py --help
 
 功能说明:
@@ -1947,6 +1986,7 @@ WebGrep - 从webarchive文件中提取新闻内容
   - 从新闻链接中提取标题、时间和正文内容
   - 支持多线程处理，提高效率
   - 支持按时间过滤新闻，只抓取指定时间之后的新闻
+  - 支持按截止时间过滤新闻，只抓取指定时间及之前的新闻
   - 如果新闻时间无法解析，默认保留该新闻
   - 结果保存到work目录下的文本文件中
 """
@@ -1962,16 +2002,19 @@ def main():
         print("使用方法: python WebGrep.py <文件1> [文件2] [文件3] ...")
         print("       或: python WebGrep.py --dir <目录>")
         print("       或: python WebGrep.py --after <日期时间>")
+        print("       或: python WebGrep.py --before <日期时间>")
         print("       或: python WebGrep.py --help")
         print("示例: python WebGrep.py web1.webarchive web2.webarchive web3.webarchive")
         print("      : python WebGrep.py --dir /path/to/webarchives")
         print("      : python WebGrep.py --after '2025-01-01 00:00'")
+        print("      : python WebGrep.py --before '2025-01-01'")
         print("      : python WebGrep.py --help")
         return
 
     # 解析命令行参数
     input_files = []
-    time_filter = None
+    after_time_filter = None
+    before_time_filter = None
     i = 1
     while i < len(sys.argv):
         arg = sys.argv[i]
@@ -1988,11 +2031,19 @@ def main():
             i += 2
         elif arg == '--after' and i + 1 < len(sys.argv):
             time_str = sys.argv[i + 1]
-            time_filter = parse_time_filter(time_str)
-            if not time_filter:
+            after_time_filter = parse_time_filter(time_str)
+            if not after_time_filter:
                 print(f"错误: 无法解析时间参数 '{time_str}'，请使用格式：YYYY-MM-DD HH:MM 或 YYYY-MM-DD")
                 return
-            print(f"时间过滤: 只抓取 {time_filter.strftime('%Y-%m-%d %H:%M')} 之后的新闻")
+            print(f"时间过滤: 只抓取 {after_time_filter.strftime('%Y-%m-%d %H:%M')} 之后的新闻")
+            i += 2
+        elif arg == '--before' and i + 1 < len(sys.argv):
+            time_str = sys.argv[i + 1]
+            before_time_filter = parse_time_filter(time_str, end_of_day=True)
+            if not before_time_filter:
+                print(f"错误: 无法解析时间参数 '{time_str}'，请使用格式：YYYY-MM-DD HH:MM 或 YYYY-MM-DD")
+                return
+            print(f"时间过滤: 只抓取 {before_time_filter.strftime('%Y-%m-%d %H:%M')} 及之前的新闻")
             i += 2
         elif not arg.startswith('--'):
             input_files.append(arg)
@@ -2000,6 +2051,10 @@ def main():
         else:
             print(f"错误: 未知参数 '{arg}'")
             return
+
+    if after_time_filter and before_time_filter and after_time_filter > before_time_filter:
+        print("错误: `--after` 时间不能晚于 `--before` 时间")
+        return
 
     # 检查所有文件是否存在
     for input_file in input_files:
@@ -2013,7 +2068,7 @@ def main():
         # 多个文件时使用线程池并行处理
         with ThreadPoolExecutor(max_workers=min(len(input_files), 5)) as executor:
             file_futures = {
-                executor.submit(extract_links_from_file, input_file, time_filter): input_file
+                executor.submit(extract_links_from_file, input_file, after_time_filter): input_file
                 for input_file in input_files
             }
             for future in as_completed(file_futures):
@@ -2028,7 +2083,7 @@ def main():
         # 单个文件直接处理
         for input_file in input_files:
             print(f"正在从文件 '{input_file}' 中提取链接...")
-            links = extract_links_from_file(input_file, time_filter)
+            links = extract_links_from_file(input_file, after_time_filter)
             print(f"从 '{input_file}' 找到 {len(links)} 个链接")
             all_links.extend(links)
 
@@ -2085,10 +2140,13 @@ def main():
                             print(f"  链接: {link}")
                             print(f"  失败原因: {reason}")
                         # 检查新闻时间是否符合过滤条件
-                        elif is_news_after_time(news.get('time'), time_filter):
+                        elif (
+                            is_news_after_time(news.get('time'), after_time_filter)
+                            and is_news_before_time(news.get('time'), before_time_filter)
+                        ):
                             news_list.append(news)
                         else:
-                            print(f"跳过新闻（时间早于过滤时间）: {news.get('title', '未知标题')}")
+                            print(f"跳过新闻（不在时间范围内）: {news.get('title', '未知标题')}")
                 except Exception as e:
                     failed_count += 1
                     print(f"处理链接出错: {link}")
