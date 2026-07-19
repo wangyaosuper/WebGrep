@@ -86,7 +86,8 @@ def main():
         "示例用法:\n"
         "  python script_for_my_work/auto_grep_analysis.py 260530 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus\n"
         "  python script_for_my_work/auto_grep_analysis.py 2026-05-30 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus\n"
-        "  python script_for_my_work/auto_grep_analysis.py --after 2026-05-30 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus"
+        "  python script_for_my_work/auto_grep_analysis.py --after 2026-05-30 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus\n"
+        "  python script_for_my_work/auto_grep_analysis.py 260530 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus --custom-requirement \"特别关注华为和小鹏的动态\""
     )
     parser = argparse.ArgumentParser(
         description="一键完成新闻抓取、分析、重命名和PDF生成的日常工作脚本",
@@ -98,6 +99,7 @@ def main():
     parser.add_argument("--dir", required=True, help="WebGrep.py 的 --dir 参数，指定 webarchive 缓存目录")
     parser.add_argument("--prompt-file", required=True, help="AnalysisGrepOutput.py 的 --prompt-file 参数，指定提示词模板文件")
     parser.add_argument("--model", required=True, help="AnalysisGrepOutput.py 的 --model 参数，指定使用的模型名称")
+    parser.add_argument("--custom-requirement", "-c", help="添加用户定制化要求，用于补充大模型的提示词", default=None)
 
     args = parser.parse_args()
 
@@ -169,6 +171,9 @@ def main():
         "--prompt-file", prompt_file,
         "--model", model
     ]
+    # 如果有自定义要求，添加到命令中
+    if args.custom_requirement:
+        cmd_analysis.extend(["--custom-requirement", args.custom_requirement])
     if not run_command(cmd_analysis, "Step 3/5: 分析新闻 (AnalysisGrepOutput.py)"):
         print("❌ 新闻分析失败，流程终止")
         sys.exit(1)
