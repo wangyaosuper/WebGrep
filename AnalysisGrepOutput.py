@@ -187,7 +187,7 @@ tr:hover {
     ai_tail = """
 
 ---
-AI辅助行业新闻正在建设优化中，如有意见或建议欢迎反馈～
+以上报告由 <a href="https://github.com/wangyaosuper/WebGrep" style="color:#1a73e8; text-decoration: none;">WebGrep.ai</a> 自动生成
 
 """
 
