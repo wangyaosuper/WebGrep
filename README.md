@@ -2,11 +2,11 @@
 
 ## 项目概述
 
-WebGrep是一个专业的新闻抓取与分析系统，专为智能驾驶行业设计。该系统能够从多个汽车行业网站自动抓取新闻内容，并利用大语言模型进行深度分析，生成结构化的行业分析报告。
+WebGrep是一个专业的新闻抓取与分析系统，专为智能驾驶行业设计。该系统能够从多个汽车行业网站自动抓取新闻内容，并利用大语言模型进行深度分析，生成结构化的行业分析报告。系统支持国内外主流汽车媒体，包括IT之家、汽车之家、盖世汽车、AutoNews、Electrek等，并提供了完整的新闻抓取、去重、合并、分析和报告生成功能。
 
 ### 核心功能
 
-1. **多源新闻抓取**：支持从汽车之家、盖世汽车、IT之家、AutoNews等多个汽车行业网站抓取新闻
+1. **多源新闻抓取**：支持从汽车之家、盖世汽车、IT之家、AutoNews、Electrek、汽车商报等多个国内外汽车行业网站抓取新闻
 2. **智能内容提取**：自动识别并提取新闻标题、时间、链接和正文内容
 3. **多线程处理**：采用多线程技术提高新闻抓取效率
 4. **时间过滤**：支持按时间范围筛选新闻，只抓取指定时间之后的新闻
@@ -14,10 +14,11 @@ WebGrep是一个专业的新闻抓取与分析系统，专为智能驾驶行业�
 6. **新闻合并**：支持将多个新闻文件合并为一个文件，并重新编号
 7. **AI分析**：集成阿里云千问大模型，对新闻内容进行智能分析
 8. **自定义分析**：支持用户自定义分析提示词，满足不同分析需求
+9. **数据统计与报告**：生成详细的抓取统计报告，包括各网站新闻数量、错误统计等
 
 ## 系统架构
 
-WebGrep系统由四个核心脚本组成：
+WebGrep系统由五个核心脚本组成：
 
 ### 1. WebGrep.py - 新闻抓取核心脚本
 
@@ -35,6 +36,8 @@ WebGrep系统由四个核心脚本组成：
 - 盖世汽车 (gasgoo.com)
 - IT之家 (ithome.com)
 - AutoNews (autonews.com)
+- Electrek (electrek.co)
+- 汽车商报 (autor.com.cn)
 
 **使用方法：**
 ```bash
@@ -93,7 +96,26 @@ python ConcatNews.py file1.txt file2.txt
 python ConcatNews.py work/news_output_20260426_060455.txt work/news_output_20260428_052015.txt
 ```
 
-### 4. DeduplicateNews.py - 新闻去重脚本
+### 4. OutputReport.py - 新闻统计报告脚本
+
+该脚本用于分析新闻抓取输出文件，生成详细的统计报告。
+
+**主要功能：**
+- 分析各网站抓取新闻数量和占比
+- 统计各网站抓取错误（未知标题、获取失败标题、未知时间、无法提取内容、获取内容出错）
+- 生成错误新闻编号明细
+- 支持非新闻网站的域名识别和统计
+
+**使用方法：**
+```bash
+# 分析新闻输出文件
+python OutputReport.py work/news_output_20260516_042151.txt
+
+# 显示帮助信息
+python OutputReport.py --help
+```
+
+### 5. DeduplicateNews.py - 新闻去重脚本
 
 该脚本用于删除重复的新闻，重复的新闻是指新闻标题和内容都相同的新闻。
 
@@ -116,11 +138,13 @@ python DeduplicateNews.py work/news_output.txt -o output.txt
 
 ### 第一步：保存网页
 
-1. 通过Safari打开目标网站：
+1. 通过Safari打开目标网站（完整列表请参考WebSiteList.txt）：
    - https://auto.ithome.com
    - https://www.autohome.com.cn
    - https://auto.gasgoo.com (需要手动点击到资讯栏目)
-   - https://www.autonews.com
+   - https://www.autonews.com/news/
+   - https://electrek.co
+   - https://www.autor.com.cn
 
 2. 确保页面内容完全加载
 
@@ -164,6 +188,8 @@ WebGrep/
 ├── AnalysisGrepOutput.py   # 新闻分析脚本
 ├── ConcatNews.py           # 新闻合并脚本
 ├── DeduplicateNews.py      # 新闻去重脚本
+├── OutputReport.py         # 新闻统计报告脚本
+├── WebSiteList.txt        # 支持的网站列表
 ├── prompts/                # 提示词模板目录
 │   ├── daily_industry_launch.md
 │   └── weekly_news_summery.md
@@ -171,6 +197,8 @@ WebGrep/
 ├── archive/                # 归档目录
 │   ├── daily/             # 每日归档
 │   └── weekly/            # 每周归档
+├── script_for_my_work/    # 工作脚本目录
+├── old_version/           # 旧版本脚本
 └── README.md              # 本文件
 ```
 
@@ -210,8 +238,14 @@ set DASHSCOPE_API_KEY=your_api_key_here
 
 ## 版本说明
 
-### 2026-05-06
-- 新增支持国外网站AutoNews
+### 2026-07-25 (V0.6.0)
+- 新增OutputReport.py，提供详细的新闻抓取统计报告功能
+- 扩展支持的网站列表，增加9to5Mac、9to5Google、DroneDJ、SpaceExplored和SolarThermalMag等网站
+- 优化新闻分类逻辑，支持更精准的网站域名识别
+- 改进报告生成功能，增加整车发布表格总结
+
+### 2026-05-06 (V0.5.0)
+- 新增支持国外网站AutoNews、Electrek和汽车商报
 - 优化新闻提取逻辑
 - 改进多线程处理效率
 WebGrep.v05@260506.支持国外网站AutoNews.py 和 AnalysisGrepOutput.v06@260502.支持模型从入參指定.支持通过openai调用百炼模型平台.py 是一组
@@ -219,7 +253,7 @@ WebGrep.v05@260506.支持国外网站AutoNews.py 和 AnalysisGrepOutput.v06@2605
 ### 2026-05-02 (V0.4.0)
 WebGrep.v04@260430.支持设定抓取新闻的最早时间.支持autohome.py 和 AnalysisGrepOutput.v06@260502.支持模型从入參指定.支持通过openai调用百炼模型平台.py 是一组
 
-### 2026-04-30
+### 2026-04-30 (V0.3.1)
 - 支持设定抓取新闻的最早时间
 - 新增支持汽车之家网站
 - 优化时间过滤功能
@@ -231,17 +265,17 @@ WebGrep.v04@260430.支持设定抓取新闻的最早时间.支持autohome.py 和
 - 优化输出格式
  WebGrep.v03@260420.py 和 AnalysisGrepOutput.v04@260420.支持用户定制提示词.py 是一组 支持用户定制提示词
 
-### 2026-04-12
+### 2026-04-12 (V0.2.0)
 - 新增支持盖世汽车网站
 - 扩展新闻上限和Tokens
 - 增加Tesla特别关注
 WebGrep.v02@260412.增加了盖世汽车共支持三个网站.py 和 AnalysisGrepOutput.v02@260412.py 是一组
 
-### 2026-04-12
+### 2026-04-12 (V0.1.1)
 - 优化新闻提取逻辑
 - 改进错误处理
 
-### 2026-04-06
+### 2026-04-06 (V0.1.0)
 - 初始版本
 - 支持IT之家和汽车之家网站
 - 基本新闻抓取和分析功能
@@ -250,7 +284,7 @@ WebGrep.v02@260412.增加了盖世汽车共支持三个网站.py 和 AnalysisGre
 
 ### Q: 如何添加新的新闻网站支持？
 
-A: 需要在WebGrep.py中添加针对新网站的新闻提取函数，并在`extract_links_from_file`函数中添加相应的处理逻辑。
+A: 需要在WebGrep.py中添加针对新网站的新闻提取函数，并在`extract_links_from_file`函数中添加相应的处理逻辑。同时，可以将新网站添加到WebSiteList.txt文件中，以便后续参考。
 
 ### Q: 如何自定义分析报告的格式？
 
