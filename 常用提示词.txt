@@ -10,3 +10,6 @@
 仔细阅读WebGrep.py，还有cache目录下面的AutoNews.260515.webarchive gasgoo.260515.p1.webarchive,AutoHome.260515.webarchive,ithome.260515.webarchive, ,以及自己解析一下https://www.autonews.com/news/，https://www.autohome.com.cn，https://auto.gasgoo.com，https://auto.ithome.com网页内容，理解WebGrep.py是如何从webarchive中抓取新闻内容的。
 现在我们要新增一个网站的支持，他的webarchive是cache目录下面的electrek.260515.webarchive 文件， 他的网站对应https://electrek.co， 深入分析一下如何通过electrek.260515.webarchive 抓取新闻内容，分析清楚一下修改一下WebGrep.py的代码
 
+三、最近一次增加新的网页，几乎一次成功
+仔细阅读WebGrep.py，还有script_for_my_work/cache目录下面的所有webarchive文件 ,以及自己解析一下 `https://www.autonews.com/news/，https://www.autohome.com.cn，https://auto.gasgoo.com，https://auto.ithome.com网页内容，理解WebGrep.py是如何从webarchive中抓取新闻内容的。` 
+ 现在我们要新增一个网站的支持，他的webarchive是temp目录下面的AutoMotive.webarchive文件， 他的网站对应h `https://automotive.messefrankfurt.com/global/en/news-insights/newsroom.html，`  深入分析一下如何通过temp/AutoMotive.webarchive 抓取新闻内容，分析清楚一下修改一下WebGrep.py的代码

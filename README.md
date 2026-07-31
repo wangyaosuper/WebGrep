@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-WebGrep是一个专业的新闻抓取与分析系统，专为智能驾驶行业设计。该系统能够从多个汽车行业网站自动抓取新闻内容，并利用大语言模型进行深度分析，生成结构化的行业分析报告。系统支持国内外主流汽车媒体，包括IT之家、汽车之家、盖世汽车、AutoNews、Electrek等，并提供了完整的新闻抓取、去重、合并、分析和报告生成功能。
+WebGrep是一个专业的新闻抓取与分析系统，专为智能驾驶行业设计。该系统能够从多个汽车行业网站自动抓取新闻内容，并利用大语言模型进行深度分析，生成结构化的行业分析报告。系统支持国内外主流汽车媒体，包括IT之家、汽车之家、盖世汽车、AutoNews、Electrek、Messe Frankfurt Automotive Newsroom等，并提供了完整的新闻抓取、去重、合并、分析和报告生成功能。
 
 ### 核心功能
 
@@ -38,6 +38,7 @@ WebGrep系统由五个核心脚本组成：
 - AutoNews (autonews.com)
 - Electrek (electrek.co)
 - 汽车商报 (autor.com.cn)
+- Messe Frankfurt Automotive (automotive.messefrankfurt.com)
 
 **使用方法：**
 ```bash
@@ -145,6 +146,7 @@ python DeduplicateNews.py work/news_output.txt -o output.txt
    - https://www.autonews.com/news/
    - https://electrek.co
    - https://www.autor.com.cn
+   - https://automotive.messefrankfurt.com/global/en/news-insights/newsroom.html
 
 2. 确保页面内容完全加载
 
@@ -304,4 +306,3 @@ A: 检查以下几点：
 ## 联系方式
 
 如有问题或建议，请通过项目仓库提交Issue。
-

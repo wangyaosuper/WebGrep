@@ -5,6 +5,7 @@ https://auto.gasgoo.com   (要自己点击主页的资讯栏，然后一页一�
 https://www.autohome.com.cn  (要自己点击主页的文章栏，然后一页一页的下载）
 https://www.autonews.com/news/
 https://electrek.co
+https://automotive.messefrankfurt.com/global/en/news-insights/newsroom.html
 
 Not Good:
 https://techcrunch.com/category/transportation/

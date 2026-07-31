@@ -261,6 +261,94 @@ def extract_news_from_electrek_list(html_content, time_filter=None):
     return news_list
 
 
+def extract_news_from_automotive_messefrankfurt_list(html_content, time_filter=None):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    news_list = []
+
+    seen_urls = set()
+
+    items = soup.select('div.m-blogroll-item[data-t-name="BlogrollItem"]')
+    print(f"找到 {len(items)} 个BlogrollItem元素")
+
+    for index, item in enumerate(items, 1):
+        try:
+            link_tag = item.find('a', class_='a-link', href=True)
+            if not link_tag:
+                continue
+
+            url = link_tag.get('href', '').strip()
+            if not url:
+                continue
+
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif url.startswith('/'):
+                url = 'https://automotive.messefrankfurt.com' + url
+
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = ""
+            h3 = item.find('h3', class_='m-blogroll-item__title')
+            if h3:
+                spans = h3.find_all('span')
+                title_candidates = []
+                for span in spans:
+                    classes = span.get('class', []) or []
+                    if 'm-blogroll-item__badge--language' in classes:
+                        continue
+                    text = span.get_text(" ", strip=True)
+                    if text:
+                        title_candidates.append(text)
+                if title_candidates:
+                    title = title_candidates[-1].strip()
+                else:
+                    title = h3.get_text(" ", strip=True)
+
+            news_time = "未知时间"
+            pretitle = item.find('div', class_='m-blogroll-item__pretitle')
+            if pretitle:
+                first_span = pretitle.find('span')
+                if first_span:
+                    date_text = first_span.get_text(" ", strip=True)
+                    if date_text:
+                        parsed = None
+                        for fmt in ("%d %b %Y", "%d %B %Y"):
+                            try:
+                                parsed = datetime.strptime(date_text, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if parsed:
+                            news_time = parsed.strftime("%Y-%m-%d")
+                        else:
+                            news_time = date_text
+
+            summary = ""
+            desc = item.find('p', class_='m-blogroll-item__description')
+            if desc:
+                summary = desc.get_text(" ", strip=True)
+
+            with _cache_lock:
+                _list_page_meta_cache[url] = {
+                    'title': title or "未知标题",
+                    'time': news_time,
+                    'summary': summary
+                }
+
+            news_list.append({
+                'title': title or "未知标题",
+                'time': news_time,
+                'url': url,
+                'content': summary or "无摘要"
+            })
+        except Exception:
+            continue
+
+    return news_list
+
+
 def extract_news_from_autonews_list(html_content, time_filter=None):
     """从autonews.com新闻列表页提取新闻信息"""
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -720,6 +808,12 @@ def is_news_link(url):
             return False
         return False
 
+    if 'automotive.messefrankfurt.com' in url_lower:
+        url_path = url_lower.split('?')[0].split('#')[0]
+        if '/news-insights/newsroom/' in url_path and (url_path.endswith('.html') or re.search(r'/news-insights/newsroom/[^/]+/?$', url_path)):
+            return True
+        return False
+
     # 排除首页链接（以/结尾或没有路径）
     if url_lower.endswith('/') or re.search(r'https?://[^/]+/?$', url_lower):
         return False
@@ -780,6 +874,7 @@ def extract_links_from_webarchive(filename, time_filter=None):
         is_autohome_list = False
         is_autonews_list = False
         is_electrek_list = False
+        is_automotive_messefrankfurt_list = False
 
         # 获取主URL
         if 'WebMainResource' in plist:
@@ -798,6 +893,9 @@ def extract_links_from_webarchive(filename, time_filter=None):
                 # 检查是否是electrek.co新闻列表页
                 if 'electrek.co' in main_url:
                     is_electrek_list = True
+
+                if 'automotive.messefrankfurt.com' in main_url and 'newsroom' in main_url:
+                    is_automotive_messefrankfurt_list = True
 
         # 注意：WebSubresources 包含的是页面子资源（字体、CSS、JS、图片等），不包含新闻链接
         # 跳过 WebSubresources，避免引入大量非新闻链接
@@ -870,6 +968,14 @@ def extract_links_from_webarchive(filename, time_filter=None):
                             print(f"已从electrek.co新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
                         else:
                             print("警告：未能从electrek.co新闻列表页提取到新闻")
+                    elif is_automotive_messefrankfurt_list:
+                        print("检测到automotive.messefrankfurt.com新闻列表页，直接提取新闻信息...")
+                        news_list = extract_news_from_automotive_messefrankfurt_list(html_content, time_filter)
+                        if news_list:
+                            links = [news['url'] for news in news_list]
+                            print(f"已从automotive.messefrankfurt.com新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
+                        else:
+                            print("警告：未能从automotive.messefrankfurt.com新闻列表页提取到新闻")
                     else:
                         # 非autohome新闻列表页，使用原有逻辑
                         soup = BeautifulSoup(html_content, 'html.parser')
@@ -891,7 +997,10 @@ def extract_links_from_webarchive(filename, time_filter=None):
                 print(f"解析HTML内容时出错: {str(e)}")
 
         # 过滤链接，只保留新闻文章链接
-        filtered_links = [link for link in links if is_news_link(link)]
+        if is_automotive_messefrankfurt_list:
+            filtered_links = links
+        else:
+            filtered_links = [link for link in links if is_news_link(link)]
 
         return list(set(filtered_links))  # 去重
     except Exception as e:
