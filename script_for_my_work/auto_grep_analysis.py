@@ -8,14 +8,14 @@ auto_grep_analysis.py - 一键完成新闻抓取、分析、重命名和PDF生�
 
 参数说明:
     date_str: 日期字符串，支持两种格式:
-        - 短格式: 260530 (用于--after参数和生成文件名，如 产业每日发布.260530.md)
+        - 短格式: 260530 (用于--after参数和生成文件名)
         - 长格式: 2026-05-30 (会自动提取短格式部分用于文件名)
 
 工作流程:
     1. 调用 WebGrep.py --dir cache --after <date> 抓取新闻
     2. 在 work 目录下找到最新生成的 dedup_news_output_*.txt 文件
     3. 调用 AnalysisGrepOutput.py 分析该文件
-    4. 将生成的 _analysis.md 文件重命名为 产业每日发布.<短日期>.md
+    4. 将生成的 _analysis.md 文件重命名为最终输出文件名（根据提示词模板自动决定）
     5. 调用 md2pdf.py 生成对应的 PDF 文件
     6. 对 dedup txt 文件进行 zip 压缩
 """
@@ -26,6 +26,8 @@ import subprocess
 import glob
 import re
 import time
+from datetime import datetime
+import shutil
 
 
 def parse_date_arg(date_str):
@@ -80,6 +82,162 @@ def run_command(cmd, description):
     return True
 
 
+def confirm_continue(message):
+    if not sys.stdin.isatty():
+        print(message)
+        print("当前为非交互环境，自动继续执行。")
+        return
+    try:
+        input(f"{message}\n按回车继续，或 Ctrl+C 终止：")
+    except EOFError:
+        print("未检测到交互输入（EOF），自动继续执行。")
+
+
+def cleanup_intermediate_files(script_dir, work_dir, news_output_file, concat_files):
+    print()
+    print("=" * 60)
+    print("📌 归档中间文件到 trash")
+    print("=" * 60)
+
+    moved = 0
+    trash_dir = os.path.join(script_dir, "trash")
+    os.makedirs(trash_dir, exist_ok=True)
+
+    def move_to_trash(src_path):
+        nonlocal moved
+        if not os.path.exists(src_path):
+            print(f"未找到（跳过）: {src_path}")
+            return
+
+        base_name = os.path.basename(src_path)
+        dest_path = os.path.join(trash_dir, base_name)
+        if os.path.exists(dest_path):
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            root, ext = os.path.splitext(base_name)
+            dest_path = os.path.join(trash_dir, f"{root}.{ts}{ext}")
+
+        shutil.move(src_path, dest_path)
+        moved += 1
+        print(f"已移动: {src_path} -> {dest_path}")
+
+    if news_output_file:
+        move_to_trash(news_output_file)
+    else:
+        print("未找到（跳过）: news_output_*.txt")
+
+    for p in concat_files or []:
+        move_to_trash(p)
+
+    if moved == 0:
+        print("未移动任何中间文件。")
+
+
+def build_output_paths(work_dir, prompt_file, after_date, short_date):
+    prompt_basename = os.path.basename(prompt_file or "")
+    if prompt_basename == "weekly_news_summery.md":
+        short_end = datetime.now().strftime("%y%m%d")
+        md_name = f"智驾新闻摘要.{short_date}-{short_end}.md"
+    else:
+        md_name = f"产业每日发布.{short_date}.md"
+
+    md_path = os.path.join(work_dir, md_name)
+    pdf_path = os.path.splitext(md_path)[0] + ".pdf"
+    return md_name, md_path, pdf_path
+
+
+def copy_weekly_archive_txts(project_root, cache_dir, short_date, archive_daily_dir=None):
+    archive_daily_dir = archive_daily_dir or os.path.abspath(
+        os.path.join(project_root, "archive", "daily")
+    )
+    if not os.path.isdir(archive_daily_dir):
+        print(f"⚠️  未找到归档目录，跳过历史txt拷贝: {archive_daily_dir}")
+        return False
+
+    try:
+        short_date_int = int(short_date)
+    except ValueError:
+        print(f"⚠️  无法解析 short_date，跳过历史txt拷贝: {short_date}")
+        return False
+
+    print()
+    print("=" * 60)
+    print("📌 Weekly 模式：拷贝归档历史txt到缓存目录（用于补充输入）")
+    print("=" * 60)
+    print(f"归档目录: {archive_daily_dir}")
+    print(f"缓存目录: {cache_dir}")
+    print(f"起始日期: {short_date} (含当日及之后)")
+
+    os.makedirs(cache_dir, exist_ok=True)
+    dest_root = os.path.join(cache_dir, "_archive_daily")
+
+    selected_dirs = []
+    dir_pattern = re.compile(r"^work\.daily@(\d{6})$")
+    for name in os.listdir(archive_daily_dir):
+        full_path = os.path.join(archive_daily_dir, name)
+        if not os.path.isdir(full_path):
+            continue
+        m = dir_pattern.match(name)
+        if not m:
+            continue
+        try:
+            dir_date_int = int(m.group(1))
+        except ValueError:
+            continue
+        if dir_date_int >= short_date_int:
+            selected_dirs.append((dir_date_int, name, full_path))
+
+    selected_dirs.sort(key=lambda x: x[0])
+    if not selected_dirs:
+        print("未找到符合日期范围的归档目录，跳过拷贝。")
+        return False
+
+    copied_count = 0
+    skipped_count = 0
+    for _, subdir_name, src_dir in selected_dirs:
+        for root, _, filenames in os.walk(src_dir):
+            for filename in filenames:
+                if not filename.lower().endswith(".txt"):
+                    continue
+                src_file = os.path.join(root, filename)
+                dest_dir = os.path.join(dest_root, subdir_name)
+                os.makedirs(dest_dir, exist_ok=True)
+                dest_file = os.path.join(dest_dir, filename)
+                if os.path.exists(dest_file):
+                    skipped_count += 1
+                    print(f"跳过（已存在）: {src_file} -> {dest_file}")
+                    continue
+                shutil.copy2(src_file, dest_file)
+                copied_count += 1
+                print(f"已拷贝: {src_file} -> {dest_file}")
+
+    print(f"拷贝完成：新增 {copied_count} 个文件，跳过 {skipped_count} 个已存在文件。")
+    return True
+
+
+def get_news_output_path_from_analysis_input(analysis_input_file):
+    base_dir = os.path.dirname(analysis_input_file or "")
+    base_name = os.path.basename(analysis_input_file or "")
+    if base_name.startswith("dedup_news_output_") and base_name.endswith(".txt"):
+        news_name = base_name.replace("dedup_news_output_", "news_output_", 1)
+        return os.path.join(base_dir, news_name)
+    if base_name.startswith("news_output_") and base_name.endswith(".txt"):
+        return analysis_input_file
+    return None
+
+
+def find_recent_files_by_pattern(search_dir, pattern, start_ts):
+    candidates = glob.glob(os.path.join(search_dir, pattern))
+    recent = []
+    for p in candidates:
+        try:
+            if os.path.getmtime(p) >= start_ts - 1:
+                recent.append(p)
+        except OSError:
+            continue
+    recent.sort(key=os.path.getmtime)
+    return recent
+
+
 def main():
     import argparse
     epilog_text = (
@@ -87,7 +245,8 @@ def main():
         "  python script_for_my_work/auto_grep_analysis.py 260530 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus\n"
         "  python script_for_my_work/auto_grep_analysis.py 2026-05-30 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus\n"
         "  python script_for_my_work/auto_grep_analysis.py --after 2026-05-30 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus\n"
-        "  python script_for_my_work/auto_grep_analysis.py 260530 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus --custom-requirement \"特别关注华为和小鹏的动态\""
+        "  python script_for_my_work/auto_grep_analysis.py 260530 --dir cache --prompt-file prompts/daily_industry_launch.md --model qwen3.6-plus --custom-requirement \"特别关注华为和小鹏的动态\"\n"
+        "  python script_for_my_work/auto_grep_analysis.py 260727 --dir cache --prompt-file prompts/weekly_news_summery.md --model qwen3.6-plus"
     )
     parser = argparse.ArgumentParser(
         description="一键完成新闻抓取、分析、重命名和PDF生成的日常工作脚本",
@@ -120,19 +279,32 @@ def main():
     # --dir 参数：WebGrep.py 的缓存目录
     cache_dir = args.dir
 
-    # 最终输出文件名
-    final_md_name = f"产业每日发布.{short_date}.md"
-    final_md_path = os.path.join(work_dir, final_md_name)
-    final_pdf_path = os.path.join(work_dir, f"产业每日发布.{short_date}.pdf")
+    final_md_name, final_md_path, final_pdf_path = build_output_paths(
+        work_dir=work_dir,
+        prompt_file=args.prompt_file,
+        after_date=after_date,
+        short_date=short_date,
+    )
 
     print("🚀 自动化新闻抓取与分析流程启动")
     print(f"📅 日期参数: {date_str}")
     print(f"   --after 参数值: {after_date}")
     print(f"   输出文件名: {final_md_name}")
 
+    prompt_basename = os.path.basename(args.prompt_file or "")
+    if prompt_basename == "weekly_news_summery.md":
+        did_copy = copy_weekly_archive_txts(
+            project_root=project_root,
+            cache_dir=cache_dir,
+            short_date=short_date,
+        )
+        if did_copy:
+            confirm_continue("✅ 归档历史txt拷贝完成，请确认输出无误后再开始抓取新闻（Step 1）")
+
     # ===== Step 1: 调用 WebGrep.py 抓取新闻 =====
     webgrep_script = os.path.join(project_root, "WebGrep.py")
     cmd_grep = [sys.executable, webgrep_script, "--dir", cache_dir, "--after", after_date]
+    grep_start_ts = time.time()
     if not run_command(cmd_grep, "Step 1/5: 抓取新闻 (WebGrep.py)"):
         print("❌ 新闻抓取失败，流程终止")
         sys.exit(1)
@@ -160,6 +332,16 @@ def main():
         print(f"   使用文件: {dedup_file}")
     else:
         print(f"✅ 找到去重文件: {dedup_file}")
+
+    output_base_dir = os.path.dirname(dedup_file) or work_dir
+    news_output_file = get_news_output_path_from_analysis_input(dedup_file)
+    if not (news_output_file and os.path.exists(news_output_file)):
+        recent_news = find_recent_files_by_pattern(output_base_dir, "news_output_*.txt", grep_start_ts)
+        if recent_news:
+            news_output_file = recent_news[-1]
+        else:
+            news_output_file = None
+    concat_files = find_recent_files_by_pattern(output_base_dir, "CONCAT_news_summary_*.txt", grep_start_ts)
 
     # ===== Step 3: 调用 AnalysisGrepOutput.py 分析新闻 =====
     analysis_script = os.path.join(project_root, "AnalysisGrepOutput.py")
@@ -217,6 +399,13 @@ def main():
     cmd_pdf = [sys.executable, md2pdf_script, final_md_path]
     if not run_command(cmd_pdf, "Step 5/5: 生成 PDF (md2pdf.py)"):
         print("⚠️  PDF 生成失败，但其他步骤已完成")
+
+    cleanup_intermediate_files(
+        script_dir=script_dir,
+        work_dir=work_dir,
+        news_output_file=news_output_file,
+        concat_files=concat_files,
+    )
 
     # ===== 附加: 压缩 dedup txt 文件 =====
     print()

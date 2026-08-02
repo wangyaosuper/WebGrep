@@ -2124,6 +2124,7 @@ def main():
     input_files = []
     after_time_filter = None
     before_time_filter = None
+    source_dir = None
     i = 1
     while i < len(sys.argv):
         arg = sys.argv[i]
@@ -2132,6 +2133,7 @@ def main():
             if not os.path.isdir(directory):
                 print(f"错误: 目录 '{directory}' 不存在或不是一个目录")
                 return
+            source_dir = directory
             input_files = find_webarchive_files(directory)
             if not input_files:
                 print(f"在目录 '{directory}' 中未找到任何.webarchive文件")
@@ -2293,6 +2295,60 @@ def main():
     except Exception as e:
         print(f"生成统计报告时出错: {e}")
 
+    concat_input_file = output_file
+    if source_dir:
+        print("\n" + "=" * 50)
+        print("正在拼接目录中的历史新闻txt作为补充输入...")
+        print("=" * 50)
+
+        supplemental_txt_files = []
+        for root, _, filenames in os.walk(source_dir):
+            for filename in filenames:
+                if not filename.lower().endswith(".txt"):
+                    continue
+                file_path = os.path.abspath(os.path.join(root, filename))
+                if os.path.abspath(output_file) == file_path:
+                    continue
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        sample = f.read(4096)
+                    if "===== 新闻" not in sample:
+                        continue
+                except Exception:
+                    continue
+                supplemental_txt_files.append(file_path)
+
+        if supplemental_txt_files:
+            supplemental_txt_files.sort(key=os.path.getmtime)
+            concat_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ConcatNews.py")
+            concat_start_time = time.time()
+            result = subprocess.run(
+                [sys.executable, concat_script, output_file, *supplemental_txt_files],
+                capture_output=False,
+                text=True,
+            )
+
+            work_dir_for_concat = os.path.abspath(os.path.dirname(output_file) or "work")
+            concat_outputs = []
+            if result.returncode == 0 and os.path.isdir(work_dir_for_concat):
+                for name in os.listdir(work_dir_for_concat):
+                    if not (name.startswith("CONCAT_news_summary_") and name.endswith(".txt")):
+                        continue
+                    path = os.path.join(work_dir_for_concat, name)
+                    try:
+                        if os.path.getmtime(path) >= concat_start_time - 1:
+                            concat_outputs.append(path)
+                    except OSError:
+                        continue
+
+            if concat_outputs:
+                concat_input_file = max(concat_outputs, key=os.path.getmtime)
+                print(f"拼接完成，合并文件: {concat_input_file}")
+            else:
+                print("拼接失败或未找到合并输出文件，跳过拼接步骤")
+        else:
+            print("未在目录中找到可用的历史新闻txt，跳过拼接步骤")
+
     # ===== 新闻去重处理 =====
     print("\n" + "=" * 50)
     print("正在进行新闻去重处理...")
@@ -2306,7 +2362,7 @@ def main():
         # 通过 subprocess 调用 DeduplicateNews.py 脚本进行去重
         dedup_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeduplicateNews.py")
         result = subprocess.run(
-            [sys.executable, dedup_script, output_file, "-o", dedup_output_file],
+            [sys.executable, dedup_script, concat_input_file, "-o", dedup_output_file],
             capture_output=False,
             text=True
         )
