@@ -56,6 +56,149 @@ def _create_retry_session(
 # 全局 Session 实例（requests.Session 底层使用 urllib3 连接池，是线程安全的）
 _retry_session = _create_retry_session()
 
+def is_title_excluded(
+    title,
+    excluded_keywords,
+    *,
+    case_insensitive=False,
+    strategy="substring",
+    short_title_max_len=30,
+    short_title_extra=5,
+):
+    if not title or not excluded_keywords:
+        return False
+
+    title_norm = re.sub(r'\s+', ' ', str(title)).strip()
+    title_cmp = title_norm.lower() if case_insensitive else title_norm
+
+    for kw in excluded_keywords:
+        if not kw:
+            continue
+        kw_norm = re.sub(r'\s+', ' ', str(kw)).strip()
+        kw_cmp = kw_norm.lower() if case_insensitive else kw_norm
+
+        if strategy == "exact":
+            if title_cmp == kw_cmp:
+                return True
+            continue
+
+        if strategy == "exact_or_short_substring":
+            if title_cmp == kw_cmp:
+                return True
+            limit = max(short_title_max_len, len(kw_cmp) + short_title_extra)
+            if len(title_cmp) <= limit and kw_cmp in title_cmp:
+                return True
+            continue
+
+        if kw_cmp in title_cmp:
+            return True
+
+    return False
+
+
+_MONTH_NAME_TO_NUM = {
+    'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7,
+    'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'jun': 6, 'jul': 7, 'aug': 8,
+    'sep': 9, 'sept': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+}
+_LONG_DATE_RE = re.compile(
+    r'(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{4})(?:\s+(\d{1,2}):(\d{2})\s*([AP]M))?'
+    , re.I
+)
+
+
+def _parse_american_month_date(text):
+    """Parse 'August 07, 2026  04:01 PM EDT' / 'August 07, 2026' style strings.
+
+    Returns datetime formatted string (YYYY-MM-DD or YYYY-MM-DD HH:MM), or None.
+    """
+    if not text:
+        return None
+    m = _LONG_DATE_RE.search(re.sub(r'\s+', ' ', text.strip()))
+    if not m:
+        return None
+    month_s, day_s, year_s, hour_s, minute_s, ampm_s = m.groups()
+    mnum = _MONTH_NAME_TO_NUM.get(month_s.lower())
+    if not mnum:
+        return None
+    day = int(day_s)
+    year = int(year_s)
+    try:
+        if hour_s:
+            hour = int(hour_s)
+            minute = int(minute_s or 0)
+            if (ampm_s or '').lower() == 'pm' and hour < 12:
+                hour += 12
+            if (ampm_s or '').lower() == 'am' and hour == 12:
+                hour = 0
+            return datetime(year, mnum, day, hour, minute).strftime('%Y-%m-%d %H:%M')
+        return datetime(year, mnum, day).strftime('%Y-%m-%d')
+    except ValueError:
+        return None
+
+
+def _parse_date_from_autonews_url_slug(url, default_year=None):
+    """Extract date from autonews URL slug patterns.
+
+    - Pattern A: /august-3-2026/ or /august-03-2026/  → explicit full date
+    - Pattern B: /...-MMDD/  e.g. /ford/an-ford-xxx-0807/  → month=08 day=07;
+                 assume `default_year` or current year
+    """
+    if not url:
+        return None
+    url_str = url.strip()
+    if not url_str:
+        return None
+
+    if default_year is None:
+        default_year = datetime.now().year
+
+    # Pattern A: explicit /august-3-2026/ or /august-03-2026/
+    full_m = re.search(
+        r'/(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)-(\d{1,2})-(\d{4})(?:[^0-9]|$)',
+        url_str, re.I
+    )
+    if full_m:
+        month_s, day_s, year_s = full_m.groups()
+        mnum = _MONTH_NAME_TO_NUM.get(month_s.lower())
+        if mnum:
+            try:
+                return datetime(int(year_s), mnum, int(day_s)).strftime('%Y-%m-%d')
+            except ValueError:
+                pass
+
+    # Pattern B: tail -MMDD/  (e.g. -0807/ at end of slug)
+    mmdd_m = re.search(r'-(\d{2})(\d{2})/?$', url_str)
+    if mmdd_m:
+        mm, dd = mmdd_m.groups()
+        try:
+            m = int(mm); d = int(dd)
+            if 1 <= m <= 12 and 1 <= d <= 31:
+                return datetime(default_year, m, d).strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+    return None
+
+
+def _find_ancestor_by_attr(tag, attr_name, attr_value, max_levels=10):
+    """Walk up DOM ancestors looking for the first element where tag[attr_name]==attr_value."""
+    if tag is None:
+        return None
+    cur = tag
+    for _ in range(max_levels):
+        try:
+            if cur.get(attr_name) == attr_value:
+                return cur
+        except Exception:
+            pass
+        if cur.parent:
+            cur = cur.parent
+        else:
+            return None
+    return None
+
+
 def extract_links_from_file(filename, time_filter=None):
     """从文件中提取所有URL链接"""
     # 检查文件扩展名
@@ -129,7 +272,7 @@ def extract_news_from_autohome_list(html_content):
             title = link_tag.get_text().strip()
 
             # 检查标题是否包含排除的关键词
-            if any(keyword in title for keyword in excluded_title_keywords):
+            if is_title_excluded(title, excluded_title_keywords, case_insensitive=False, strategy="substring"):
                 continue
 
             # 检查标题长度，太短的可能是导航或功能按钮
@@ -212,7 +355,14 @@ def extract_news_from_electrek_list(html_content, time_filter=None):
             title = link_tag.get_text().strip()
 
             # 检查标题是否包含排除的关键词
-            if any(keyword.lower() in title.lower() for keyword in excluded_title_keywords):
+            if is_title_excluded(
+                title,
+                excluded_title_keywords,
+                case_insensitive=True,
+                strategy="exact_or_short_substring",
+                short_title_max_len=30,
+                short_title_extra=5,
+            ):
                 continue
 
             # 检查标题长度
@@ -394,7 +544,7 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
             title = link_tag.get_text().strip()
 
             # 检查标题是否包含排除的关键词
-            if any(keyword.lower() in title.lower() for keyword in excluded_title_keywords):
+            if is_title_excluded(title, excluded_title_keywords, case_insensitive=True, strategy="substring"):
                 continue
 
             # 检查标题长度
@@ -442,7 +592,9 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
 
             # 查找时间
             news_time = "未知时间"
-            if parent:
+
+            # (1) 旧版结构尝试：父元素 / 兄弟元素中的 <time> 标签或 class=time/date
+            if parent and news_time == "未知时间":
                 time_elem = parent.find('time')
                 if time_elem:
                     datetime_attr = time_elem.get('datetime')
@@ -453,30 +605,61 @@ def extract_news_from_autonews_list(html_content, time_filter=None):
                         except:
                             pass
                     if news_time == "未知时间":
-                        news_time = time_elem.get_text().strip()
-                else:
-                    # 尝试从兄弟元素中查找时间
-                    for sibling in parent.find_next_siblings():
-                        time_elem = sibling.find('time')
-                        if time_elem:
-                            datetime_attr = time_elem.get('datetime')
-                            if datetime_attr:
-                                try:
-                                    dt = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
-                                    news_time = dt.strftime('%Y-%m-%d %H:%M')
-                                except:
-                                    pass
-                            if news_time == "未知时间":
-                                news_time = time_elem.get_text().strip()
+                        parsed = _parse_american_month_date(time_elem.get_text()) or time_elem.get_text().strip()
+                        if parsed and parsed != "未知时间":
+                            news_time = parsed
+            if parent and news_time == "未知时间":
+                for sibling in parent.find_next_siblings():
+                    time_elem = sibling.find('time')
+                    if time_elem:
+                        datetime_attr = time_elem.get('datetime')
+                        if datetime_attr:
+                            try:
+                                dt = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
+                                news_time = dt.strftime('%Y-%m-%d %H:%M')
+                            except:
+                                pass
+                        if news_time == "未知时间":
+                            parsed = _parse_american_month_date(time_elem.get_text()) or time_elem.get_text().strip()
+                            if parsed and parsed != "未知时间":
+                                news_time = parsed
+                        break
+
+            if parent and news_time == "未知时间":
+                for elem in parent.find_all(class_=re.compile(r'time|date', re.I)):
+                    text = elem.get_text().strip()
+                    if text and re.search(r'\d{4}', text):
+                        parsed = _parse_american_month_date(text)
+                        news_time = parsed or text
+                        break
+
+            # (2) 新版 AutoNews 列表页 (2026 改版) 结构：story 卡片内使用 div (非 time 标签)
+            #     显示格式如 "August 07, 2026  04:01 PM EDT"
+            if news_time == "未知时间":
+                story_card = _find_ancestor_by_attr(link_tag, 'data-testid', 'story', max_levels=10)
+                if story_card:
+                    # 在当前新闻卡片的范围内，搜索所有文本中是否存在 "Month DD, YYYY [HH:MM AM/PM]"
+                    candidate_texts = []
+                    # 优先：whitespace-nowrap divs (新版页面中日期元素的特征 class)
+                    for el in story_card.find_all('div', class_=re.compile(r'u-whitespace-nowrap|u-font-secondary')):
+                        txt = el.get_text(' ', strip=True)
+                        if txt and re.search(r'\d{4}', txt):
+                            candidate_texts.append(txt)
+                    # 兜底：card 中所有包含年份数字的字符串
+                    if not candidate_texts:
+                        for s in story_card.find_all(string=re.compile(r'\d{4}')):
+                            candidate_texts.append(str(s))
+                    for ct in candidate_texts:
+                        parsed = _parse_american_month_date(ct)
+                        if parsed:
+                            news_time = parsed
                             break
 
-                    # 如果还没找到，尝试从class包含time或date的元素中提取
-                    if news_time == "未知时间":
-                        for elem in parent.find_all(class_=re.compile(r'time|date', re.I)):
-                            text = elem.get_text().strip()
-                            if text and re.search(r'\d{4}', text):
-                                news_time = text
-                                break
+            # (3) URL slug 日期兜底：新版 autonews URL 形如 /ford/an-xxx-0807/
+            if news_time == "未知时间":
+                slug_date = _parse_date_from_autonews_url_slug(url)
+                if slug_date:
+                    news_time = slug_date
 
             # 打印当前分析的story链接信息
             print(f"[{index}/{len(news_links)}] 标题: {title}")
