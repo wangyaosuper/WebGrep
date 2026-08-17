@@ -54,26 +54,37 @@ def load_prompt_template(prompt_file):
     with open(prompt_file, 'r', encoding='utf-8') as f:
         return f.read()
 
-def create_analysis_prompt(news_list, custom_requirement=None, prompt_template=None):
+def load_old_report(old_report_file):
+    """加载上一周的报告文件内容"""
+    if not old_report_file:
+        return None
+    if not os.path.exists(old_report_file):
+        print(f"警告: 上一周报告文件 '{old_report_file}' 不存在，将忽略该参数")
+        return None
+    with open(old_report_file, 'r', encoding='utf-8') as f:
+        return f.read()
+
+def create_analysis_prompt(news_list, custom_requirement=None, prompt_template=None, old_report_content=None, prompt_file=None):
     """创建分析提示词"""
-    # 分析所有新闻，不设置上限
     selected_news = news_list
 
-    # 构建新闻摘要
     news_summary = ""
     for i, news in enumerate(selected_news, 1):
         news_summary += f"\n新闻 {i}:\n"
         news_summary += f"标题: {news['title']}\n"
         news_summary += f"链接: {news['link']}\n"
-        news_summary += f"内容摘要: {news['content'][:1500]}...\n"  # 只使用前1500字
+        news_summary += f"内容摘要: {news['content'][:1500]}...\n"
 
-    # 使用外部提示词模板或默认模板
     if prompt_template:
-        # 替换模板变量
         prompt = prompt_template.replace('{news_count}', str(len(selected_news)))
         prompt = prompt.replace('{news_summary}', news_summary)
+
+        prompt_basename = os.path.basename(prompt_file) if prompt_file else ""
+        if prompt_basename == "weekly_news_summery.md" and old_report_content:
+            prompt = prompt.replace('{old_report}', old_report_content)
+        else:
+            prompt = prompt.replace('{old_report}', '')
     else:
-        # 如果没有提供模板，使用默认的硬编码模板
         prompt = f"""你是一位专业的行业分析师，请对以下{len(selected_news)}篇科技新闻围绕智能驾驶进行深入分析。
 
 {news_summary}
@@ -86,7 +97,6 @@ def create_analysis_prompt(news_list, custom_requirement=None, prompt_template=N
 3. **总结与建议**
    - 提供行业建议"""
 
-    # 如果用户提供了定制化要求，添加到提示词中
     if custom_requirement:
         prompt = f"用户定制要求：{custom_requirement}\n\n{prompt}"
 
@@ -198,7 +208,6 @@ tr:hover {
         f.write(ai_tail)
 
 def main():
-    # 设置命令行参数解析
     parser = argparse.ArgumentParser(
         description='分析新闻文件并生成智能驾驶行业分析报告',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -210,6 +219,7 @@ def main():
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --custom-requirement "特别关注华为和小鹏的动态"
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model deepseek-v4-pro --custom-requirement "重点关注激光雷达技术发展"
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen3.6-plus --custom-requirement "重点关注激光雷达技术发展"
+  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --old-report last_week_report.md
         '''
     )
     parser.add_argument('input_file', help='要分析的新闻文件路径')
@@ -219,11 +229,13 @@ def main():
     parser.add_argument('--model', '-m',
                        help='指定使用的模型名称（默认: qwen-plus，可选: deepseek-v4-pro, qwen3.6-plus）',
                        default='qwen-plus')
-    parser.add_argument('--custom-requirement', '-c', 
+    parser.add_argument('--custom-requirement', '-c',
                        help='添加用户定制化要求，用于补充大模型的提示词',
                        default=None)
+    parser.add_argument('--old-report',
+                       help='指定上一周的报告文件路径（markdown格式，仅配合 weekly_news_summery.md 使用）',
+                       default=None)
 
-    # 如果没有参数，显示帮助信息
     if len(sys.argv) == 1:
         parser.print_help()
         return
@@ -233,12 +245,12 @@ def main():
     prompt_file = args.prompt_file
     model = args.model
     custom_requirement = args.custom_requirement
+    old_report_file = args.old_report
 
     if not os.path.exists(input_file):
         print(f"错误: 文件 '{input_file}' 不存在")
         return
 
-    # 解析新闻文件
     print(f"正在解析文件 '{input_file}'...")
     news_list = parse_news_file(input_file)
     print(f"找到 {len(news_list)} 条新闻")
@@ -247,7 +259,6 @@ def main():
         print("未找到任何新闻")
         return
 
-    # 加载提示词模板
     if not os.path.exists(prompt_file):
         print(f"错误: 提示词文件 '{prompt_file}' 不存在")
         return
@@ -259,11 +270,17 @@ def main():
         print(f"错误: 加载提示词模板失败: {str(e)}")
         return
 
-    # 创建分析提示词
+    old_report_content = None
+    if old_report_file:
+        print(f"正在加载上一周报告 '{old_report_file}'...")
+        old_report_content = load_old_report(old_report_file)
+        if old_report_content:
+            print("上一周报告加载成功")
+
     print("正在创建分析提示词...")
     if custom_requirement:
         print(f"用户定制要求: {custom_requirement}")
-    prompt = create_analysis_prompt(news_list, custom_requirement, prompt_template)
+    prompt = create_analysis_prompt(news_list, custom_requirement, prompt_template, old_report_content, prompt_file)
 
     # 调用大模型进行分析
     print(f"正在调用大模型 '{model}' 进行分析...")
