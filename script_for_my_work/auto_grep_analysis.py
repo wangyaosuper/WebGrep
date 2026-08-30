@@ -135,7 +135,9 @@ def cleanup_intermediate_files(script_dir, work_dir, news_output_file, concat_fi
 def build_output_paths(work_dir, prompt_file, after_date, short_date):
     prompt_basename = os.path.basename(prompt_file or "")
     if prompt_basename == "weekly_news_summery.md":
-        short_end = datetime.now().strftime("%y%m%d")
+        from datetime import timedelta
+        end_date = datetime.now() - timedelta(days=1)
+        short_end = end_date.strftime("%y%m%d")
         md_name = f"智驾新闻摘要.{short_date}-{short_end}.md"
     else:
         md_name = f"产业每日发布.{short_date}.md"
