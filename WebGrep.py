@@ -499,6 +499,135 @@ def extract_news_from_automotive_messefrankfurt_list(html_content, time_filter=N
     return news_list
 
 
+def extract_news_from_insideevs_list(html_content, time_filter=None):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    news_list = []
+
+    seen_urls = set()
+
+    excluded_title_keywords = [
+        'Subscribe', 'Log in', 'Sign up', 'Menu', 'Search',
+        'About', 'Contact', 'Advertise', 'Privacy', 'Terms',
+        'Newsletter', 'Follow us', 'Most Popular', 'Guides',
+        'Download', 'Podcast', 'Featured News', 'Videos',
+        'Photos', 'Best EVs', 'Reviews', 'Features'
+    ]
+
+    articles = soup.find_all('article')
+    print(f"找到 {len(articles)} 个article元素")
+
+    for index, article in enumerate(articles, 1):
+        try:
+            heading = article.find('h2') or article.find('h3')
+            if not heading:
+                continue
+            link_tag = heading.find('a', href=True)
+            if not link_tag:
+                continue
+
+            url = link_tag['href']
+            url = url.strip('"').strip("'")
+
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif not url.startswith('http'):
+                if url.startswith('/'):
+                    url = 'https://insideevs.com' + url
+                else:
+                    continue
+
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = link_tag.get_text().strip()
+
+            if is_title_excluded(
+                title,
+                excluded_title_keywords,
+                case_insensitive=True,
+                strategy="exact_or_short_substring",
+                short_title_max_len=30,
+                short_title_extra=5,
+            ):
+                continue
+
+            if len(title) < 10:
+                continue
+
+            news_time = "未知时间"
+            time_elem = article.find('time')
+            if time_elem:
+                datetime_attr = time_elem.get('datetime')
+                if datetime_attr:
+                    try:
+                        dt = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
+                        news_time = dt.strftime('%Y-%m-%d %H:%M')
+                    except:
+                        pass
+                if news_time == "未知时间":
+                    raw_time = time_elem.get_text().strip()
+                    if raw_time:
+                        news_time = raw_time
+
+            if news_time == "未知时间":
+                for cls in ['meta', 'date', 'time']:
+                    for el in article.find_all(class_=re.compile(r'\b' + cls + r'\b', re.I)):
+                        text = el.get_text(" ", strip=True)
+                        if text and ('ago' in text.lower() or re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', text, re.I)):
+                            news_time = text
+                            break
+                    if news_time != "未知时间":
+                        break
+
+            id_date_match = re.search(r'/news/(\d{4})(\d{2})\d+/', url)
+            if id_date_match and (news_time == "未知时间" or 'ago' in news_time.lower()):
+                prefix_year = id_date_match.group(1)
+                if prefix_year.startswith('20') and int(prefix_year) >= 2020:
+                    pass
+
+            summary = ""
+            all_links = article.find_all('a', href=True)
+            for a in all_links:
+                if a is link_tag:
+                    continue
+                txt = a.get_text(" ", strip=True)
+                if txt and len(txt) > 30 and not txt.startswith('By'):
+                    summary = txt
+                    break
+
+            if not summary:
+                for p in article.find_all(['p', 'span', 'div']):
+                    text = p.get_text(" ", strip=True)
+                    if text and len(text) > 40:
+                        classes = ' '.join(p.get('class', []))
+                        if 'author' in classes.lower():
+                            continue
+                        summary = text
+                        break
+
+            print(f"[{index}/{len(articles)}] 标题: {title}")
+            print(f"[{index}/{len(articles)}] 时间: {news_time}")
+
+            with _cache_lock:
+                _list_page_meta_cache[url] = {
+                    'title': title or "未知标题",
+                    'time': news_time,
+                    'summary': summary
+                }
+
+            news_list.append({
+                'title': title or "未知标题",
+                'time': news_time,
+                'url': url,
+                'content': summary or "无摘要"
+            })
+        except Exception as e:
+            continue
+
+    return news_list
+
+
 def extract_news_from_autonews_list(html_content, time_filter=None):
     """从autonews.com新闻列表页提取新闻信息"""
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -997,6 +1126,14 @@ def is_news_link(url):
             return True
         return False
 
+    if 'insideevs.com' in url_lower:
+        url_path = url_lower.split('?')[0].split('#')[0]
+        if re.search(r'/news/\d+/[a-z0-9-]+/?$', url_path):
+            return True
+        if any(path in url_lower for path in ['/info/', '/reviews/', '/features/', '/topic/', '/category/', '/photos/', '/videos/', '/podcasts/', '/author/']):
+            return False
+        return False
+
     # 排除首页链接（以/结尾或没有路径）
     if url_lower.endswith('/') or re.search(r'https?://[^/]+/?$', url_lower):
         return False
@@ -1058,6 +1195,7 @@ def extract_links_from_webarchive(filename, time_filter=None):
         is_autonews_list = False
         is_electrek_list = False
         is_automotive_messefrankfurt_list = False
+        is_insideevs_list = False
 
         # 获取主URL
         if 'WebMainResource' in plist:
@@ -1079,6 +1217,9 @@ def extract_links_from_webarchive(filename, time_filter=None):
 
                 if 'automotive.messefrankfurt.com' in main_url and 'newsroom' in main_url:
                     is_automotive_messefrankfurt_list = True
+
+                if 'insideevs.com' in main_url and ('/news/' in main_url or main_url.endswith('insideevs.com/') or main_url.endswith('insideevs.com')):
+                    is_insideevs_list = True
 
         # 注意：WebSubresources 包含的是页面子资源（字体、CSS、JS、图片等），不包含新闻链接
         # 跳过 WebSubresources，避免引入大量非新闻链接
@@ -1159,6 +1300,15 @@ def extract_links_from_webarchive(filename, time_filter=None):
                             print(f"已从automotive.messefrankfurt.com新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
                         else:
                             print("警告：未能从automotive.messefrankfurt.com新闻列表页提取到新闻")
+                    elif is_insideevs_list:
+                        print("检测到insideevs.com新闻列表页，直接提取新闻信息...")
+                        news_list = extract_news_from_insideevs_list(html_content, time_filter)
+                        if news_list:
+                            for news in news_list:
+                                links.append(news['url'])
+                            print(f"已从insideevs.com新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
+                        else:
+                            print("警告：未能从insideevs.com新闻列表页提取到新闻")
                     else:
                         # 非autohome新闻列表页，使用原有逻辑
                         soup = BeautifulSoup(html_content, 'html.parser')
@@ -1218,6 +1368,9 @@ def extract_news_content(url):
 
         # 检查是否是electrek.co网站
         is_electrek = 'electrek.co' in url.lower()
+
+        # 检查是否是insideevs.com网站
+        is_insideevs = 'insideevs.com' in url.lower()
 
         # 尝试提取标题
         title = None
@@ -1308,6 +1461,39 @@ def extract_news_content(url):
                             break
 
             # 对于electrek.co网站，如果标题为空或未知，则跳过这条新闻
+            if not title or title == "未知标题":
+                return None
+        elif is_insideevs:
+            meta_title = soup.find('meta', property='og:title')
+            if meta_title and meta_title.get('content'):
+                title = meta_title['content'].strip()
+
+            if not title:
+                h1_tags = soup.find_all('h1')
+                if h1_tags:
+                    for h1_tag in h1_tags:
+                        title_text = h1_tag.get_text().strip()
+                        excluded_keywords = [
+                            'Subscribe', 'Log in', 'Sign up', 'Menu', 'Search',
+                            'About', 'Contact', 'Advertise', 'Privacy', 'Terms',
+                            'Newsletter', 'Follow us', 'Most Popular', 'Guides',
+                            'Home', 'Electric Vehicle', 'EV', 'Solar', 'Battery',
+                            'Reviews', 'Features', 'Videos', 'Podcasts', 'Photos'
+                        ]
+                        if title_text and len(title_text) > 10 and not any(keyword.lower() in title_text.lower() for keyword in excluded_keywords):
+                            title = title_text
+                            break
+
+            if not title:
+                title_selectors = ['.article-title', '.news-title', '.title', 'h2']
+                for selector in title_selectors:
+                    title_elem = soup.select_one(selector)
+                    if title_elem:
+                        title_text = title_elem.get_text().strip()
+                        if title_text and len(title_text) > 5:
+                            title = title_text
+                            break
+
             if not title or title == "未知标题":
                 return None
         elif is_autohome:
@@ -1565,6 +1751,82 @@ def extract_news_content(url):
                     news_time = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
 
             # 尝试从HTML源码中提取ISO格式时间
+            if news_time == "未知时间":
+                html_content_str = str(soup)
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2}[T\s]\d{1,2}:\d{1,2}:\d{1,2})', html_content_str)
+                if date_match:
+                    time_str = date_match.group(1)
+                    try:
+                        time_formats = ['%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S']
+                        for fmt in time_formats:
+                            try:
+                                dt = datetime.strptime(time_str, fmt)
+                                news_time = dt.strftime('%Y-%m-%d %H:%M')
+                                break
+                            except:
+                                continue
+                    except:
+                        pass
+        elif is_insideevs:
+            meta_time = soup.find('meta', property='article:published_time')
+            if meta_time and meta_time.get('content'):
+                time_text = meta_time['content'].strip()
+                try:
+                    dt = datetime.fromisoformat(time_text.replace('Z', '+00:00'))
+                    news_time = dt.strftime('%Y-%m-%d %H:%M')
+                except:
+                    pass
+
+            if news_time == "未知时间":
+                time_tag = soup.find('time')
+                if time_tag:
+                    datetime_attr = time_tag.get('datetime')
+                    if datetime_attr:
+                        try:
+                            dt = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
+                            news_time = dt.strftime('%Y-%m-%d %H:%M')
+                        except:
+                            pass
+                    if news_time == "未知时间":
+                        time_text = time_tag.get_text().strip()
+                        if time_text:
+                            parsed = _parse_american_month_date(time_text.replace('at ', '').replace(' ET', '').replace(' EDT', '').replace(' EST', ''))
+                            if parsed:
+                                news_time = parsed
+                            elif 'ago' in time_text.lower() or re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', time_text, re.I):
+                                news_time = time_text
+
+            if news_time == "未知时间":
+                for cls in ['meta', 'date', 'time', 'author', 'byline', 'published']:
+                    for el in soup.find_all(class_=re.compile(cls, re.I)):
+                        text = el.get_text(" ", strip=True)
+                        if text and len(text) < 80:
+                            cleaned = re.sub(r'\s+', ' ', text.replace('at ', '').replace(' ET', '').replace(' EDT', '').replace(' EST', ''))
+                            parsed = _parse_american_month_date(cleaned)
+                            if parsed:
+                                news_time = parsed
+                                break
+                            if 'ago' in text.lower() or re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b', text, re.I):
+                                news_time = text
+                                break
+                    if news_time != "未知时间":
+                        break
+
+            if news_time == "未知时间":
+                article_main = soup.select_one('main article') or soup.find('article')
+                if article_main:
+                    candidate_texts = []
+                    for s in article_main.find_all(string=True):
+                        st = str(s).strip()
+                        if st and len(st) < 80 and re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b', st, re.I):
+                            candidate_texts.append(st)
+                    for ct in candidate_texts:
+                        cleaned = re.sub(r'\s+', ' ', ct.replace('at ', '').replace(' ET', '').replace(' EDT', '').replace(' EST', ''))
+                        parsed = _parse_american_month_date(cleaned)
+                        if parsed:
+                            news_time = parsed
+                            break
+
             if news_time == "未知时间":
                 html_content_str = str(soup)
                 date_match = re.search(r'(\d{4}-\d{2}-\d{2}[T\s]\d{1,2}:\d{1,2}:\d{1,2})', html_content_str)
@@ -1962,6 +2224,52 @@ def extract_news_content(url):
                         break
                     else:
                         content = None
+        elif is_insideevs:
+            content_selectors = [
+                'main article', 'article', '.article-content',
+                '.post-content', '.entry-content', 'article .content',
+                '.article__body', '.post-body', '.main-content'
+            ]
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    for script in content_elem(["script", "style"]):
+                        script.extract()
+
+                    remove_selectors = [
+                        '.nav', '.navigation', '.header', '.footer',
+                        '.sidebar', '.related', '.recommend', '.tags',
+                        '.author-info', '.share', '.comment', '.ad',
+                        '#footer', '#header', '#nav', '#sidebar',
+                        '.article-tags', '.article-footer', '.related-news',
+                        '.newsletter', '.subscribe-box', '.trending',
+                        '.most-popular', '.social-share', '.post-meta',
+                        '.article__meta-guides', '.article__share',
+                        '.gallery', '.image-caption', '[role="complementary"]',
+                        'nav', 'aside', 'figure figcaption',
+                        '.widget-newsletter', '.widget-newsletter__wrapper',
+                        '[class*="newsletter"]', '[class*="widget-newsletter"]',
+                        '.relatedContent-new', '.relatedContent',
+                        '.apInarticleSmallRes', '.outstream_partner',
+                        '.m1-ap-native', '.m1-ap-native-mobile',
+                        '.content-area-box-outbrain', '[id*="taboola"]', '[id*="outbrain"]',
+                        '[class*="outbrain"]', '[class*="taboola"]',
+                        '#comments-block-wrapper', '.comments-hider',
+                        '.comment-wrapper', '[id*="comment"]',
+                        '.tip-us-email-container', '.isBottomShare',
+                        '.common-hider-bottom', '.m1-survey-promo',
+                        '.group', 'form'
+                    ]
+
+                    for remove_selector in remove_selectors:
+                        for elem in content_elem.select(remove_selector):
+                            elem.extract()
+
+                    content = content_elem.get_text(separator='\n').strip()
+                    if content and len(content) > 100:
+                        break
+                    else:
+                        content = None
         elif is_gasgoo:
             # gasgoo网站的内容在#ArticleContent或.contentDetailed中
             content_elem = soup.select_one('#ArticleContent') or soup.select_one('.contentDetailed')
@@ -2078,14 +2386,36 @@ def save_news_to_file(news_list, output_file):
             # 只移除"Skip to main content"字符串，保留所有其他内容
             content = content.replace('Skip to main content', '').strip()
 
-            # 改进的过滤逻辑：只在内容的最后1/3部分查找footer关键词
-            # 这样可以避免过滤掉出现在内容中间的"Featured Stories"等
+            # 改进的过滤逻辑：分两级置信度查找尾部关键词
+            # 高置信度关键词：只在最后1/5范围内查找
+            # 低置信度关键词（过于通用如Privacy Policy/More On This/Comments）：只在最后1/10范围内查找，避免误杀正文中部嵌入的CTA
             footer_start = len(content)
-            footer_keywords = [
+            high_conf_keywords = [
                 'Featured Stories',
                 'Used Cars',
                 'Here\'s our 2026 list',
                 'Subscribe to Automotive News',
+                'Subscribe to Electrek',
+                'FTC: We use income earning auto affiliate links',
+                'More from Electrek',
+                'Share this Story',
+                'Sponsored Content',
+                'Got a tip for us? Email:',
+                'Subscribe to InsideEVs',
+                'Motorsport Network. All rights reserved',
+                'Add InsideEVs as a preferred source in Google',
+                'Top comments',
+                'Comment (',
+                'Article Sidebar',
+                'RECOMMENDED FOR YOU',
+                'View all comments',
+                'GO TO COMMENTS',
+                'Sponsored',
+                'Trending Articles',
+                'Most Read',
+                'Stay informed with our newsletter',
+            ]
+            low_conf_keywords = [
                 'Follow us on',
                 'Copyright',
                 'Privacy Policy',
@@ -2095,24 +2425,29 @@ def save_news_to_file(news_list, output_file):
                 'Footer',
                 'About Us',
                 'Advertise',
-                'Subscribe to Electrek',
-                'FTC: We use income earning auto affiliate links',
-                'More from Electrek',
                 'Comments',
-                'Guides'
+                'Guides',
+                'More On This',
             ]
 
-            # 只在内容的最后1/3长度范围内查找footer_keywords
-            if len(content) > 100:  # 只有内容足够长时才进行过滤
-                search_start = int(len(content) * 1 / 5)  # 从2/3位置开始搜索
-                search_content = content[search_start:]  # 获取最后1/3的内容
-
-                # 从后往前查找footer_keywords
-                for keyword in footer_keywords:
-                    pos = search_content.rfind(keyword)  # 使用rfind从后往前查找
+            # 只有内容足够长时才进行过滤
+            if len(content) > 100:
+                # 高置信度：最后1/5
+                high_start = int(len(content) * 4 / 5)
+                search_high = content[high_start:]
+                for keyword in high_conf_keywords:
+                    pos = search_high.rfind(keyword)
                     if pos != -1:
-                        # 计算在原始content中的位置
-                        actual_pos = search_start + pos
+                        actual_pos = high_start + pos
+                        if actual_pos < footer_start:
+                            footer_start = actual_pos
+                # 低置信度：最后1/10
+                low_start = int(len(content) * 9 / 10)
+                search_low = content[low_start:]
+                for keyword in low_conf_keywords:
+                    pos = search_low.rfind(keyword)
+                    if pos != -1:
+                        actual_pos = low_start + pos
                         if actual_pos < footer_start:
                             footer_start = actual_pos
 
