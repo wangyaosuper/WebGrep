@@ -18,3 +18,7 @@
 四、增加 https://insideevs.com/news/
 仔细阅读WebGrep.py，还有script_for_my_work/cache目录下面的所有webarchive文件 ,以及自己解析一下 `https://www.autonews.com/news/，https://www.autohome.com.cn，https://electrek.co，https://auto.ithome.com网页内容，理解WebGrep.py是如何从webarchive中抓取新闻内容的。` 
  现在我们要新增一个网站的支持，他的webarchive是script_for_my_work/temp目录下面的insideevs.webarchive文件， 他的网站对应https://insideevs.com/news/  , 深入分析一下如何通过insideevs.webarchive 抓取新闻内容，分析清楚后修改一下WebGrep.py的代码来支持这个网站的抓取
+
+五、增加 https://www.notateslaapp.com
+仔细阅读WebGrep.py，还有script_for_my_work/cache目录下面的所有webarchive文件 ,以及自己解析一下 `https://www.autonews.com/news/，https://www.autohome.com.cn，https://electrek.co，https://auto.ithome.com，https://insideevs.com/news/网页内容，理解WebGrep.py是如何从webarchive中抓取新闻内容的。` 
+ 现在我们要新增一个网站的支持，他的webarchive是script_for_my_work/temp目录下面的nottesla.webarchive文件， 他的网站对应https://www.notateslaapp.com  , 深入分析一下如何通过nottesla.webarchive 抓取新闻内容，分析清楚后修改一下WebGrep.py的代码来支持这个网站的抓取 

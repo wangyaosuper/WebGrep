@@ -628,6 +628,171 @@ def extract_news_from_insideevs_list(html_content, time_filter=None):
     return news_list
 
 
+def extract_news_from_nottesla_list(html_content, time_filter=None):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    news_list = []
+
+    seen_urls = set()
+
+    excluded_title_keywords = [
+        'Subscribe', 'Log in', 'Sign up', 'Menu', 'Search',
+        'About', 'Contact', 'Advertise', 'Privacy', 'Terms',
+        'Newsletter', 'Follow us', 'Most Popular', 'Guides',
+        'Download', 'Podcast', 'Featured News', 'Videos',
+        'Photos', 'Reviews', 'Features'
+    ]
+
+    card_selectors = [
+        '.card', '.card-featured', '.carousel-card', '.carousel-card-side', '.carousel-card-square'
+    ]
+    cards = []
+    for sel in card_selectors:
+        cards.extend(soup.select(sel))
+
+    print(f"找到 {len(cards)} 个卡片元素(.card/.card-featured/.carousel-card等)")
+
+    for index, card in enumerate(cards, 1):
+        try:
+            link_tag = None
+            if card.name == 'a' and card.get('href'):
+                link_tag = card
+            else:
+                link_tag = card.find('a', href=True)
+            if not link_tag:
+                continue
+
+            url = link_tag['href']
+            url = url.strip('"').strip("'")
+
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif not url.startswith('http'):
+                if url.startswith('/'):
+                    url = 'https://www.notateslaapp.com' + url
+                else:
+                    continue
+
+            if not re.search(r'/news/\d+/', url):
+                continue
+
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = None
+            h1 = card.find('h1')
+            if h1:
+                title = h1.get_text(' ', strip=True)
+
+            if not title:
+                h3 = card.find('h3')
+                if h3:
+                    title = h3.get_text(' ', strip=True)
+
+            if not title:
+                h2 = card.find('h2')
+                if h2:
+                    title = h2.get_text(' ', strip=True)
+
+            if not title:
+                headline = card.find(class_=re.compile(r'card-headline__content|card-featured__content', re.I))
+                if headline:
+                    t = headline.get_text(' ', strip=True)
+                    cleaned = re.sub(r'^[A-Z][A-Z0-9/\s]+\s+', '', t)
+                    cleaned = re.sub(r'\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(,\s*\d{4})?\s*$', '', cleaned, flags=re.I)
+                    cleaned = cleaned.strip()
+                    if cleaned and len(cleaned) >= max(8, len(t) / 2):
+                        title = cleaned
+
+            if not title:
+                img = card.find('img', alt=True)
+                if img and img.get('alt'):
+                    t = img['alt'].strip()
+                    if t and len(t) > 5:
+                        title = t
+
+            if not title:
+                title = link_tag.get_text(' ', strip=True)
+                if title:
+                    title = re.sub(r'^[A-Z][A-Z0-9/\s]+\s+', '', title)
+                    title = re.sub(r'\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(,\s*\d{4})?\s*$', '', title, flags=re.I)
+                    title = title.strip()
+
+            if is_title_excluded(
+                title,
+                excluded_title_keywords,
+                case_insensitive=True,
+                strategy="exact_or_short_substring",
+                short_title_max_len=30,
+                short_title_extra=5,
+            ):
+                continue
+
+            if len(title) < 10:
+                continue
+
+            news_time = "未知时间"
+            meta_elem = card.find(class_=re.compile(r'card-meta', re.I))
+            if meta_elem:
+                raw_time = meta_elem.get_text(' ', strip=True)
+                if raw_time:
+                    parsed = _parse_american_month_date(raw_time)
+                    if not parsed and re.match(r'^[A-Z][a-z]{2,8}\s+\d{1,2}$', raw_time.strip()):
+                        fixed = f"{raw_time.strip()}, {datetime.now().year}"
+                        parsed = _parse_american_month_date(fixed)
+                    if parsed:
+                        news_time = parsed
+                    elif 'ago' in raw_time.lower() or re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', raw_time, re.I):
+                        news_time = raw_time
+
+            if news_time == "未知时间":
+                for el in card.find_all(['div', 'span', 'p'], class_=re.compile(r'meta|date|time', re.I)):
+                    text = el.get_text(' ', strip=True)
+                    if text and len(text) < 60:
+                        parsed = _parse_american_month_date(text)
+                        if not parsed and re.match(r'^[A-Z][a-z]{2,8}\s+\d{1,2}$', text.strip()):
+                            fixed = f"{text.strip()}, {datetime.now().year}"
+                            parsed = _parse_american_month_date(fixed)
+                        if parsed:
+                            news_time = parsed
+                            break
+                        if re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b', text, re.I):
+                            news_time = text
+                            break
+
+            summary = ""
+            summary_source = card.find(class_=re.compile(r'subhead|subtitle|description|excerpt|summary|lede|dek', re.I))
+            if summary_source:
+                st = summary_source.get_text(' ', strip=True)
+                if st and 20 < len(st) < 500:
+                    cleaned = re.sub(r'^[A-Z][A-Z0-9/\s]+\s+', '', st)
+                    cleaned = re.sub(r'\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(,\s*\d{4})?\s*$', '', cleaned, flags=re.I)
+                    cleaned = cleaned.strip()
+                    if len(cleaned) >= max(10, len(st) / 2):
+                        summary = cleaned
+
+            print(f"[{index}/{len(cards)}] 标题: {title}")
+            print(f"[{index}/{len(cards)}] 时间: {news_time}")
+
+            with _cache_lock:
+                _list_page_meta_cache[url] = {
+                    'title': title or "未知标题",
+                    'time': news_time,
+                    'summary': summary
+                }
+
+            news_list.append({
+                'title': title or "未知标题",
+                'time': news_time,
+                'url': url,
+                'content': summary or "无摘要"
+            })
+        except Exception as e:
+            continue
+
+    return news_list
+
+
 def extract_news_from_autonews_list(html_content, time_filter=None):
     """从autonews.com新闻列表页提取新闻信息"""
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -1134,6 +1299,14 @@ def is_news_link(url):
             return False
         return False
 
+    if 'notateslaapp.com' in url_lower:
+        url_path = url_lower.split('?')[0].split('#')[0]
+        if re.search(r'/news/\d+/[a-z0-9-]+/?$', url_path):
+            return True
+        if any(path in url_lower for path in ['/about', '/contact-us', '/privacy-policy', '/sponsor', '/rss', '/tesla-newsletter', '/dashboard', '/community/']):
+            return False
+        return False
+
     # 排除首页链接（以/结尾或没有路径）
     if url_lower.endswith('/') or re.search(r'https?://[^/]+/?$', url_lower):
         return False
@@ -1196,6 +1369,7 @@ def extract_links_from_webarchive(filename, time_filter=None):
         is_electrek_list = False
         is_automotive_messefrankfurt_list = False
         is_insideevs_list = False
+        is_nottesla_list = False
 
         # 获取主URL
         if 'WebMainResource' in plist:
@@ -1220,6 +1394,9 @@ def extract_links_from_webarchive(filename, time_filter=None):
 
                 if 'insideevs.com' in main_url and ('/news/' in main_url or main_url.endswith('insideevs.com/') or main_url.endswith('insideevs.com')):
                     is_insideevs_list = True
+
+                if 'notateslaapp.com' in main_url:
+                    is_nottesla_list = True
 
         # 注意：WebSubresources 包含的是页面子资源（字体、CSS、JS、图片等），不包含新闻链接
         # 跳过 WebSubresources，避免引入大量非新闻链接
@@ -1309,6 +1486,15 @@ def extract_links_from_webarchive(filename, time_filter=None):
                             print(f"已从insideevs.com新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
                         else:
                             print("警告：未能从insideevs.com新闻列表页提取到新闻")
+                    elif is_nottesla_list:
+                        print("检测到notateslaapp.com新闻列表页，直接提取新闻信息...")
+                        news_list = extract_news_from_nottesla_list(html_content, time_filter)
+                        if news_list:
+                            for news in news_list:
+                                links.append(news['url'])
+                            print(f"已从notateslaapp.com新闻列表页提取 {len(news_list)} 条新闻元信息，URL已加入统一处理队列")
+                        else:
+                            print("警告：未能从notateslaapp.com新闻列表页提取到新闻")
                     else:
                         # 非autohome新闻列表页，使用原有逻辑
                         soup = BeautifulSoup(html_content, 'html.parser')
@@ -1371,6 +1557,9 @@ def extract_news_content(url):
 
         # 检查是否是insideevs.com网站
         is_insideevs = 'insideevs.com' in url.lower()
+
+        # 检查是否是notateslaapp.com网站
+        is_nottesla = 'notateslaapp.com' in url.lower()
 
         # 尝试提取标题
         title = None
@@ -1486,6 +1675,40 @@ def extract_news_content(url):
 
             if not title:
                 title_selectors = ['.article-title', '.news-title', '.title', 'h2']
+                for selector in title_selectors:
+                    title_elem = soup.select_one(selector)
+                    if title_elem:
+                        title_text = title_elem.get_text().strip()
+                        if title_text and len(title_text) > 5:
+                            title = title_text
+                            break
+
+            if not title or title == "未知标题":
+                return None
+        elif is_nottesla:
+            meta_title = soup.find('meta', property='og:title')
+            if meta_title and meta_title.get('content'):
+                title = meta_title['content'].strip()
+                title = re.sub(r'\s*-\s*Not a Tesla App\s*$', '', title, flags=re.I).strip()
+
+            if not title:
+                h1_tags = soup.find_all('h1')
+                if h1_tags:
+                    for h1_tag in h1_tags:
+                        title_text = h1_tag.get_text().strip()
+                        excluded_keywords = [
+                            'Subscribe', 'Log in', 'Sign up', 'Menu', 'Search',
+                            'About', 'Contact', 'Advertise', 'Privacy', 'Terms',
+                            'Newsletter', 'Follow us', 'Most Popular', 'Guides',
+                            'Home', 'Tesla News', 'Software Updates', 'Tesla Tips',
+                            'Reviews', 'Features', 'Videos', 'Podcasts', 'Photos'
+                        ]
+                        if title_text and len(title_text) > 10 and not any(keyword.lower() in title_text.lower() for keyword in excluded_keywords):
+                            title = title_text
+                            break
+
+            if not title:
+                title_selectors = ['.article-title', '.news-title', '.title', 'article h1', 'h2']
                 for selector in title_selectors:
                     title_elem = soup.select_one(selector)
                     if title_elem:
@@ -1826,6 +2049,60 @@ def extract_news_content(url):
                         if parsed:
                             news_time = parsed
                             break
+
+            if news_time == "未知时间":
+                html_content_str = str(soup)
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2}[T\s]\d{1,2}:\d{1,2}:\d{1,2})', html_content_str)
+                if date_match:
+                    time_str = date_match.group(1)
+                    try:
+                        time_formats = ['%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S']
+                        for fmt in time_formats:
+                            try:
+                                dt = datetime.strptime(time_str, fmt)
+                                news_time = dt.strftime('%Y-%m-%d %H:%M')
+                                break
+                            except:
+                                continue
+                    except:
+                        pass
+        elif is_nottesla:
+            meta_time = soup.find('meta', property='article:published_time')
+            if meta_time and meta_time.get('content'):
+                time_text = meta_time['content'].strip()
+                try:
+                    dt = datetime.fromisoformat(time_text.replace('Z', '+00:00'))
+                    news_time = dt.strftime('%Y-%m-%d %H:%M')
+                except:
+                    pass
+
+            if news_time == "未知时间":
+                time_tag = soup.find('time')
+                if time_tag:
+                    datetime_attr = time_tag.get('datetime')
+                    if datetime_attr:
+                        try:
+                            dt = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
+                            news_time = dt.strftime('%Y-%m-%d %H:%M')
+                        except:
+                            pass
+                    if news_time == "未知时间":
+                        time_text = time_tag.get_text().strip()
+                        if time_text:
+                            parsed = _parse_american_month_date(time_text)
+                            if parsed:
+                                news_time = parsed
+
+            if news_time == "未知时间":
+                date_elem = soup.find(class_=re.compile(r'mod-article__attribution__date|article-date|post-date|published', re.I))
+                if date_elem:
+                    time_text = date_elem.get_text(' ', strip=True)
+                    if time_text:
+                        parsed = _parse_american_month_date(time_text)
+                        if parsed:
+                            news_time = parsed
+                        elif 'ago' in time_text.lower() or re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', time_text, re.I):
+                            news_time = time_text
 
             if news_time == "未知时间":
                 html_content_str = str(soup)
@@ -2270,6 +2547,46 @@ def extract_news_content(url):
                         break
                     else:
                         content = None
+        elif is_nottesla:
+            content_selectors = [
+                '.mod-article__content', '.mod-article__body',
+                'article.mod-article', '.mod-article__text',
+                '.article-content', '.content', '.post-content',
+                '.entry-content', 'article', '.main-content'
+            ]
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    for script in content_elem(["script", "style"]):
+                        script.extract()
+
+                    remove_selectors = [
+                        '.nav', '.navigation', '.header', '.footer',
+                        '.sidebar', '.related', '.recommend', '.tags',
+                        '.author-info', '.share', '.comment', '.ad',
+                        '#footer', '#header', '#nav', '#sidebar',
+                        '.article-tags', '.article-footer', '.related-news',
+                        '.newsletter', '.subscribe-box', '.trending',
+                        '.most-popular', '.social-share', '.post-meta',
+                        '.mod--share', '.mod--carousel', '.mod--carousel__content',
+                        '.mod--carousel__nav', '.mod--list', '.mod--iframely',
+                        '.aside-right', '.video-player-module',
+                        '.mod-article__header', '.mod-article__attribution',
+                        '.mod-article__subhead', '.mod-content__header',
+                        '.active-effect', '.article-image', '.picture-wrapper',
+                        '.text-overlay', '[class*="carousel"]', '[class*="share"]',
+                        '[role="complementary"]', 'nav', 'aside', 'figure figcaption'
+                    ]
+
+                    for remove_selector in remove_selectors:
+                        for elem in content_elem.select(remove_selector):
+                            elem.extract()
+
+                    content = content_elem.get_text(separator='\n').strip()
+                    if content and len(content) > 100:
+                        break
+                    else:
+                        content = None
         elif is_gasgoo:
             # gasgoo网站的内容在#ArticleContent或.contentDetailed中
             content_elem = soup.select_one('#ArticleContent') or soup.select_one('.contentDetailed')
@@ -2414,6 +2731,13 @@ def save_news_to_file(news_list, output_file):
                 'Trending Articles',
                 'Most Read',
                 'Stay informed with our newsletter',
+                'Subscribe to Not a Tesla App',
+                'Top Stories',
+                'Latest Tesla News',
+                'Related Articles',
+                'About Not a Tesla App',
+                'Not a Tesla App on',
+                'Tesla News, Software Updates, Rumors and Tips',
             ]
             low_conf_keywords = [
                 'Follow us on',

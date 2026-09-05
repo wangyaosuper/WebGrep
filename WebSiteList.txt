@@ -6,10 +6,11 @@ https://www.autohome.com.cn  (要自己点击主页的文章栏，然后一页�
 https://www.autonews.com/news/
 https://electrek.co
 https://insideevs.com/news/
+https://www.notateslaapp.com
 
 
 待研究:
-https://www.notateslaapp.com
+
 
 Not Good:
 https://techcrunch.com/category/transportation/
