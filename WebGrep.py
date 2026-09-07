@@ -672,7 +672,7 @@ def extract_news_from_nottesla_list(html_content, time_filter=None):
                 else:
                     continue
 
-            if not re.search(r'/news/\d+/', url):
+            if not (re.search(r'/news/\d+/', url) or re.search(r'/software-updates/version/[^/]+/release-notes/?$', url)):
                 continue
 
             if url in seen_urls:
@@ -1303,6 +1303,8 @@ def is_news_link(url):
         url_path = url_lower.split('?')[0].split('#')[0]
         if re.search(r'/news/\d+/[a-z0-9-]+/?$', url_path):
             return True
+        if re.search(r'/software-updates/version/[^/]+/release-notes/?$', url_path):
+            return True
         if any(path in url_lower for path in ['/about', '/contact-us', '/privacy-policy', '/sponsor', '/rss', '/tesla-newsletter', '/dashboard', '/community/']):
             return False
         return False
@@ -1690,6 +1692,7 @@ def extract_news_content(url):
             if meta_title and meta_title.get('content'):
                 title = meta_title['content'].strip()
                 title = re.sub(r'\s*-\s*Not a Tesla App\s*$', '', title, flags=re.I).strip()
+                title = re.sub(r'\s*-\s*Software Updates\s*$', '', title, flags=re.I).strip()
 
             if not title:
                 h1_tags = soup.find_all('h1')
@@ -2103,6 +2106,46 @@ def extract_news_content(url):
                             news_time = parsed
                         elif 'ago' in time_text.lower() or re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', time_text, re.I):
                             news_time = time_text
+
+            if news_time == "未知时间":
+                overview_texts = []
+                for sel in ['.mod-release-notes', '.mod-update-overview', '.mod-update-features']:
+                    for el in soup.select(sel):
+                        overview_texts.append(el.get_text(' ', strip=True))
+                combined_text = '\n'.join(overview_texts)
+                if combined_text:
+                    date_match = re.search(
+                        r'Release\s+Date\s+((?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},?\s*\d{4})',
+                        combined_text, re.I
+                    )
+                    if date_match:
+                        release_date_text = date_match.group(1).strip()
+                        parsed = _parse_american_month_date(release_date_text)
+                        if not parsed and re.match(r'^[A-Z][a-z]{2,8}\.?\s+\d{1,2}$', release_date_text):
+                            parsed = _parse_american_month_date(f"{release_date_text}, {datetime.now().year}")
+                        if parsed:
+                            news_time = parsed
+                    if news_time == "未知时间":
+                        loose_date = re.search(
+                            r'((?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},?\s*\d{4})',
+                            combined_text, re.I
+                        )
+                        if loose_date:
+                            parsed = _parse_american_month_date(loose_date.group(1))
+                            if parsed:
+                                news_time = parsed
+
+            if news_time == "未知时间":
+                feature_elems = soup.select(
+                    '.mod-update-overview-feature-description, .mod-update-overview-feature-details, .mod-update-feature-description, .mod-update-feature-details'
+                )
+                for s in feature_elems:
+                    st = s.get_text(' ', strip=True)
+                    if st and re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', st, re.I):
+                        parsed = _parse_american_month_date(st)
+                        if parsed:
+                            news_time = parsed
+                            break
 
             if news_time == "未知时间":
                 html_content_str = str(soup)
@@ -2548,45 +2591,109 @@ def extract_news_content(url):
                     else:
                         content = None
         elif is_nottesla:
-            content_selectors = [
-                '.mod-article__content', '.mod-article__body',
-                'article.mod-article', '.mod-article__text',
-                '.article-content', '.content', '.post-content',
-                '.entry-content', 'article', '.main-content'
-            ]
-            for selector in content_selectors:
-                content_elem = soup.select_one(selector)
-                if content_elem:
-                    for script in content_elem(["script", "style"]):
+            release_notes_url = bool(re.search(r'/software-updates/version/[^/]+/release-notes/?$', url.lower() if url else ''))
+            if release_notes_url:
+                parts = []
+                overview = soup.select_one('.mod-release-notes') or soup.select_one('.mod-update-overview')
+                if overview:
+                    for script in overview(["script", "style"]):
                         script.extract()
-
-                    remove_selectors = [
-                        '.nav', '.navigation', '.header', '.footer',
-                        '.sidebar', '.related', '.recommend', '.tags',
-                        '.author-info', '.share', '.comment', '.ad',
-                        '#footer', '#header', '#nav', '#sidebar',
-                        '.article-tags', '.article-footer', '.related-news',
-                        '.newsletter', '.subscribe-box', '.trending',
-                        '.most-popular', '.social-share', '.post-meta',
-                        '.mod--share', '.mod--carousel', '.mod--carousel__content',
-                        '.mod--carousel__nav', '.mod--list', '.mod--iframely',
-                        '.aside-right', '.video-player-module',
-                        '.mod-article__header', '.mod-article__attribution',
-                        '.mod-article__subhead', '.mod-content__header',
-                        '.active-effect', '.article-image', '.picture-wrapper',
-                        '.text-overlay', '[class*="carousel"]', '[class*="share"]',
-                        '[role="complementary"]', 'nav', 'aside', 'figure figcaption'
+                    remove_selectors_top = [
+                        '[class*="stats-overview"]', '.mod-no-padding',
+                        '.button-container', '.section-footer-details',
+                        '.mod-update-overview-feature-icon', '.sticky-sidebar-X',
+                        '.mod-list-versions', '[class*="-nav"]'
                     ]
-
-                    for remove_selector in remove_selectors:
-                        for elem in content_elem.select(remove_selector):
+                    work = BeautifulSoup(str(overview), 'html.parser').find() or overview
+                    for rs in remove_selectors_top:
+                        for elem in work.select(rs):
                             elem.extract()
+                    t = work.get_text(separator='\n').strip()
+                    if t and len(t) > 30:
+                        parts.append(t)
 
-                    content = content_elem.get_text(separator='\n').strip()
-                    if content and len(content) > 100:
-                        break
-                    else:
+                features_text = []
+                for feat in soup.select('.col-bc > .mod-update-feature, .mod-update-feature'):
+                    feat_work = BeautifulSoup(str(feat), 'html.parser').find() or feat
+                    for script in feat_work(["script", "style"]):
+                        script.extract()
+                    for rs in [
+                        '.mod-stats-overview-horizontal', '.mod-update-feature-requirements',
+                        '.mod-update-feature-image', '.mod-update-feature-section-1',
+                        '.requirement-name-feature', '.requirements-features',
+                        '.mod-update-feature-requirement', '.mod-update-feature-requirement-label',
+                        '.mod-update-feature-requirement-name', '[class*="-image"]'
+                    ]:
+                        for elem in feat_work.select(rs):
+                            elem.extract()
+                    # Filter out the very first short intro card if no body exists
+                    ft = feat_work.get_text(separator='\n').strip()
+                    if ft and len(ft) > 120:
+                        features_text.append(ft)
+
+                if features_text:
+                    parts.append('\n\n'.join(features_text))
+
+                if parts:
+                    content = '\n\n'.join([p for p in parts if p]).strip()
+                    if content and len(content) < 100:
                         content = None
+
+            if not content:
+                content_selectors = [
+                    '.col-bc', '.software-updates-individual-page',
+                    '.mod-release-notes', '.mod-update-features',
+                    '.mod-article__content', '.mod-article__body',
+                    'article.mod-article', '.mod-article__text',
+                    '.article-content', '.content', '.post-content',
+                    '.entry-content', 'article', '.main-content'
+                ]
+                for selector in content_selectors:
+                    content_elem = soup.select_one(selector)
+                    if content_elem:
+                        for script in content_elem(["script", "style"]):
+                            script.extract()
+
+                        remove_selectors = [
+                            '.nav', '.navigation', '.header', '.footer',
+                            '.sidebar', '.related', '.recommend', '.tags',
+                            '.author-info', '.share', '.comment', '.ad',
+                            '#footer', '#header', '#nav', '#sidebar',
+                            '.article-tags', '.article-footer', '.related-news',
+                            '.newsletter', '.subscribe-box', '.trending',
+                            '.most-popular', '.social-share', '.post-meta',
+                            '.mod--share', '.mod--carousel', '.mod--carousel__content',
+                            '.mod--carousel__nav', '.mod--list', '.mod--iframely',
+                            '.aside-right', '.video-player-module',
+                            '.mod-article__header', '.mod-article__attribution',
+                            '.mod-article__subhead', '.mod-content__header',
+                            '.active-effect', '.article-image', '.picture-wrapper',
+                            '.text-overlay', '[class*="carousel"]', '[class*="share"]',
+                            '[role="complementary"]', 'nav', 'aside', 'figure figcaption',
+                            '.mod-stats-overview', '.mod-stats-overview-horizontal',
+                            '.sticky-sidebar-X', '.mod-no-padding', '.button-container',
+                            '.section-footer-details', '.mod-update-overview-feature-icon',
+                            '.mod-update-overview-horizontal',
+                            '.update-statistics-section', '[class*="stats-overview"]',
+                            '.mod-list-versions', '.col-a', '.col-b',
+                            '.mod-update-feature-requirements',
+                            '.mod-update-feature-image',
+                            '.mod-update-feature-section-1',
+                            '.requirement-name-feature', '.requirements-features',
+                            '.mod-update-feature-requirement',
+                            '.mod-update-feature-requirement-label',
+                            '.mod-update-feature-requirement-name'
+                        ]
+
+                        for remove_selector in remove_selectors:
+                            for elem in content_elem.select(remove_selector):
+                                elem.extract()
+
+                        content = content_elem.get_text(separator='\n').strip()
+                        if content and len(content) > 100:
+                            break
+                        else:
+                            content = None
         elif is_gasgoo:
             # gasgoo网站的内容在#ArticleContent或.contentDetailed中
             content_elem = soup.select_one('#ArticleContent') or soup.select_one('.contentDetailed')
