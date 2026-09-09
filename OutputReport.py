@@ -84,6 +84,8 @@ KNOWN_NEWS_SITES = {
     "gasgoo.com": "盖世汽车",
     "electrek.co": "Electrek",
     "autonews.com": "AutoNews",
+    "insideevs.com": "InsideEVs",
+    "notateslaapp.com": "Not a Tesla App",
     "autor.com.cn": "汽车商报",
     "automotive.messefrankfurt.com": "MesseFrankfurt Automotive",
     "elektroauto-news.net": "Elektroauto-News",
