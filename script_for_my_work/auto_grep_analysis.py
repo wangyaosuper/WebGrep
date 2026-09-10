@@ -147,6 +147,98 @@ def build_output_paths(work_dir, prompt_file, after_date, short_date):
     return md_name, md_path, pdf_path
 
 
+def resolve_path(candidate_path, base_dirs):
+    """按顺序尝试多个基准目录解析路径，返回第一个存在的绝对路径；都不存在则返回候选路径的绝对化结果。"""
+    if os.path.isabs(candidate_path):
+        return candidate_path
+    for base in base_dirs:
+        abs_path = os.path.abspath(os.path.join(base, candidate_path))
+        if os.path.exists(abs_path):
+            return abs_path
+    return os.path.abspath(candidate_path)
+
+
+def validate_preflight_args(args, script_dir, project_root):
+    """
+    在开始抓取新闻之前进行参数可用性预校验，避免抓完才发现参数错误浪费时间。
+    返回 (errors: list[str], warnings: list[str])
+    """
+    errors = []
+    warnings = []
+
+    # ===== 1. 校验 --prompt-file =====
+    if args.prompt_file:
+        search_bases = [os.getcwd(), project_root, script_dir]
+        resolved_prompt = resolve_path(args.prompt_file, search_bases)
+        if not os.path.isfile(resolved_prompt):
+            errors.append(
+                f"--prompt-file 不存在: {args.prompt_file}\n"
+                f"        已尝试路径: {resolved_prompt}\n"
+                f"        可用模板: prompts/daily_industry_launch.md, prompts/weekly_news_summery.md"
+            )
+        else:
+            try:
+                with open(resolved_prompt, "r", encoding="utf-8") as f:
+                    content = f.read(1)
+                if len(content) == 0:
+                    warnings.append(f"--prompt-file 文件为空: {resolved_prompt}")
+            except (OSError, UnicodeDecodeError) as e:
+                errors.append(f"--prompt-file 无法读取: {resolved_prompt} ({e})")
+
+    # ===== 2. 校验 --dir（缓存目录） =====
+    if args.dir:
+        cache_dir = os.path.abspath(args.dir)
+        if os.path.exists(cache_dir):
+            if not os.path.isdir(cache_dir):
+                errors.append(f"--dir 不是目录: {cache_dir}")
+            elif not os.access(cache_dir, os.W_OK | os.R_OK):
+                errors.append(f"--dir 目录无读写权限: {cache_dir}")
+        else:
+            parent = os.path.dirname(cache_dir) or "."
+            if not os.path.isdir(parent):
+                errors.append(f"--dir 的父目录不存在，无法自动创建: {cache_dir}")
+            elif not os.access(parent, os.W_OK):
+                errors.append(f"--dir 的父目录无写权限，无法自动创建子目录: {parent}")
+            else:
+                warnings.append(f"--dir 目录不存在，将在运行时自动创建: {cache_dir}")
+
+    # ===== 3. 校验 --old-report（如果提供） =====
+    if args.old_report:
+        search_bases = [os.getcwd(), project_root, script_dir]
+        resolved_old = resolve_path(args.old_report, search_bases)
+        if not os.path.isfile(resolved_old):
+            errors.append(f"--old-report 不存在: {args.old_report} (已解析为 {resolved_old})")
+        else:
+            try:
+                with open(resolved_old, "r", encoding="utf-8") as f:
+                    f.read(1)
+            except (OSError, UnicodeDecodeError) as e:
+                errors.append(f"--old-report 无法读取: {resolved_old} ({e})")
+
+    # ===== 4. 校验关键依赖脚本 =====
+    webgrep_script = os.path.join(project_root, "WebGrep.py")
+    if not os.path.isfile(webgrep_script):
+        errors.append(f"关键依赖脚本不存在: {webgrep_script}")
+
+    analysis_script = os.path.join(project_root, "AnalysisGrepOutput.py")
+    if not os.path.isfile(analysis_script):
+        errors.append(f"关键依赖脚本不存在: {analysis_script}")
+
+    # md2pdf 脚本在项目外部，且原实现中失败仅警告，这里也仅警告
+    md2pdf_candidates = [
+        os.path.join(os.path.dirname(project_root), "md2pdf", "md2pdf.py"),
+        os.path.join(project_root, "..", "md2pdf", "md2pdf.py"),
+    ]
+    md2pdf_found = any(os.path.isfile(p) for p in md2pdf_candidates)
+    if not md2pdf_found:
+        warnings.append(
+            "未找到 md2pdf.py，最终 PDF 生成步骤将跳过（不影响新闻抓取和分析）\n"
+            f"        尝试路径: {md2pdf_candidates}"
+        )
+
+    return errors, warnings
+
+
 def copy_weekly_archive_txts(project_root, cache_dir, short_date, archive_daily_dir=None):
     archive_daily_dir = archive_daily_dir or os.path.abspath(
         os.path.join(project_root, "archive", "daily")
@@ -294,6 +386,29 @@ def main():
     print(f"📅 日期参数: {date_str}")
     print(f"   --after 参数值: {after_date}")
     print(f"   输出文件名: {final_md_name}")
+
+    # ===== Preflight: 参数可用性预校验（在抓取新闻之前执行，避免白忙活） =====
+    print()
+    print("=" * 60)
+    print("🔍 Preflight: 校验参数与依赖可用性")
+    print("=" * 60)
+
+    errors, warnings = validate_preflight_args(args, script_dir=script_dir, project_root=project_root)
+
+    if warnings:
+        for w in warnings:
+            print(f"⚠️  [警告] {w}")
+
+    if errors:
+        print()
+        print("❌ Preflight 校验未通过，存在以下错误：")
+        for i, e in enumerate(errors, 1):
+            print(f"   [{i}] {e}")
+        print()
+        print("   请修正参数后重新运行。（尚未开始抓取新闻，无时间浪费）")
+        sys.exit(2)
+
+    print("✅ Preflight 校验通过，所有关键参数与依赖可用。")
 
     prompt_basename = os.path.basename(args.prompt_file or "")
     if prompt_basename == "weekly_news_summery.md":
