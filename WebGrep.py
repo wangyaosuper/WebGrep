@@ -181,6 +181,154 @@ def _parse_date_from_autonews_url_slug(url, default_year=None):
     return None
 
 
+_RELATIVE_TIME_RE = re.compile(
+    r'^\s*(?P<num>\d+|a|an)\s+(?P<unit>second|minute|hour|day|week|month|year)s?\s+ago\s*$',
+    re.I
+)
+
+def _parse_relative_time_to_absolute(text, now=None):
+    """Parse relative time strings like '3 hours ago', 'Yesterday', '2 days ago'
+    to an absolute datetime formatted string (YYYY-MM-DD HH:MM / YYYY-MM-DD).
+
+    Returns (formatted_str, datetime_obj) tuple, or (None, None) on failure.
+    """
+    if not text:
+        return None, None
+    stripped = text.strip()
+    if not stripped:
+        return None, None
+    if now is None:
+        now = datetime.now()
+
+    low = stripped.lower()
+
+    # Yesterday / Yesterday at ...
+    if low.startswith('yesterday'):
+        dt = now - timedelta(days=1)
+        return dt.strftime('%Y-%m-%d'), dt
+
+    # Today / Just now / Moments ago
+    if low in ('today', 'just now', 'moments ago'):
+        return now.strftime('%Y-%m-%d %H:%M'), now
+    if low.startswith('today'):
+        return now.strftime('%Y-%m-%d'), now
+
+    m = _RELATIVE_TIME_RE.match(stripped)
+    if m:
+        num_s = m.group('num').lower()
+        unit = m.group('unit').lower()
+        if num_s in ('a', 'an'):
+            num = 1
+        else:
+            try:
+                num = int(num_s)
+            except ValueError:
+                return None, None
+
+        kwargs = {}
+        if unit == 'second':
+            kwargs['seconds'] = num
+        elif unit == 'minute':
+            kwargs['minutes'] = num
+        elif unit == 'hour':
+            kwargs['hours'] = num
+        elif unit == 'day':
+            kwargs['days'] = num
+        elif unit == 'week':
+            kwargs['weeks'] = num
+        elif unit == 'month':
+            kwargs['days'] = num * 30
+        elif unit == 'year':
+            kwargs['days'] = num * 365
+
+        if not kwargs:
+            return None, None
+
+        dt = now - timedelta(**kwargs)
+        if unit in ('day', 'week', 'month', 'year'):
+            return dt.strftime('%Y-%m-%d'), dt
+        else:
+            return dt.strftime('%Y-%m-%d %H:%M'), dt
+
+    # Not a Tesla App: strip leading uppercase category prefix like
+    #   "TESLA SEMI 5 hours ago" / "MODEL 3 / MODEL Y 6 hours ago"
+    # before retrying the relative-time match against the suffix.
+    prefix_re = re.compile(r'^[A-Z][A-Z0-9&\s/\-]*[A-Z]\s+')
+    sub = prefix_re.sub('', stripped, count=1)
+    if sub != stripped and sub:
+        m2 = _RELATIVE_TIME_RE.match(sub)
+        if m2:
+            sub_fixed = sub
+        else:
+            low_sub = sub.lower()
+            if low_sub.startswith('yesterday') or low_sub in (
+                'today', 'just now', 'moments ago'
+            ) or low_sub.startswith('today'):
+                sub_fixed = sub
+            else:
+                # Also allow prefix + Yesterday / Today variants (sometimes
+                # followed by prefix like "FSD Yesterday ...")
+                sub_fixed = None
+                for kw in ('yesterday', 'today', 'just now', 'moments ago'):
+                    idx = low_sub.find(kw)
+                    if idx >= 0:
+                        sub_fixed = sub[idx:]
+                        break
+        if m2 or sub_fixed != sub:
+            return _parse_relative_time_to_absolute(sub_fixed or sub, now=now)
+
+    return None, None
+
+
+def _extract_nottesla_row_date(card_tag):
+    """从 notateslaapp 卡片的父容器 news-row 中提取显式日期 (SEP 11)。
+    Returns 'YYYY-MM-DD' or None.
+    """
+    if card_tag is None:
+        return None
+    row = None
+    cur = card_tag.parent
+    for _ in range(6):
+        if cur is None:
+            break
+        cls = cur.get('class', []) or []
+        cls_str = ' '.join(cls).lower()
+        if 'news-row' in cls_str:
+            row = cur
+            break
+        cur = cur.parent
+    if row is None:
+        return None
+    date_elem = row.find(class_=re.compile(r'news-date(?!.*spacer)', re.I))
+    if not date_elem:
+        return None
+    month_short = date_elem.find(class_=re.compile(r'news-date__month-short', re.I))
+    month_long = date_elem.find(class_=re.compile(r'news-date__month-long', re.I))
+    day_elem = date_elem.find(class_=re.compile(r'news-date__day', re.I))
+    month_name = None
+    if month_short:
+        month_name = month_short.get_text(' ', strip=True)
+    if (not month_name) and month_long:
+        month_name = month_long.get_text(' ', strip=True)
+    day_str = None
+    if day_elem:
+        day_str = day_elem.get_text(' ', strip=True)
+    if not month_name or not day_str:
+        return None
+    mnum = _MONTH_NAME_TO_NUM.get(month_name.lower())
+    if not mnum:
+        return None
+    try:
+        day = int(day_str)
+    except ValueError:
+        return None
+    try:
+        dt = datetime(datetime.now().year, mnum, day)
+    except ValueError:
+        return None
+    return dt.strftime('%Y-%m-%d')
+
+
 def _find_ancestor_by_attr(tag, attr_name, attr_value, max_levels=10):
     """Walk up DOM ancestors looking for the first element where tag[attr_name]==attr_value."""
     if tag is None:
@@ -643,13 +791,15 @@ def extract_news_from_nottesla_list(html_content, time_filter=None):
     ]
 
     card_selectors = [
-        '.card', '.card-featured', '.carousel-card', '.carousel-card-side', '.carousel-card-square'
+        '.card', '.card-featured', '.carousel-card', '.carousel-card-side', '.carousel-card-square',
+        '.news-card', '.news-card--standard', '.news-card--featured',
+        '.top-news-item'
     ]
     cards = []
     for sel in card_selectors:
         cards.extend(soup.select(sel))
 
-    print(f"找到 {len(cards)} 个卡片元素(.card/.card-featured/.carousel-card等)")
+    print(f"找到 {len(cards)} 个卡片元素(.card/.card-featured/.carousel-card/.news-card/.top-news-item等)")
 
     for index, card in enumerate(cards, 1):
         try:
@@ -732,7 +882,11 @@ def extract_news_from_nottesla_list(html_content, time_filter=None):
                 continue
 
             news_time = "未知时间"
-            meta_elem = card.find(class_=re.compile(r'card-meta', re.I))
+            meta_class_re = re.compile(
+                r'card-meta|news-card__date|news-card__meta|top-news-item__time|date|time',
+                re.I
+            )
+            meta_elem = card.find(class_=meta_class_re)
             if meta_elem:
                 raw_time = meta_elem.get_text(' ', strip=True)
                 if raw_time:
@@ -740,25 +894,46 @@ def extract_news_from_nottesla_list(html_content, time_filter=None):
                     if not parsed and re.match(r'^[A-Z][a-z]{2,8}\s+\d{1,2}$', raw_time.strip()):
                         fixed = f"{raw_time.strip()}, {datetime.now().year}"
                         parsed = _parse_american_month_date(fixed)
+                    if not parsed:
+                        rel_str, _ = _parse_relative_time_to_absolute(raw_time)
+                        if rel_str:
+                            parsed = rel_str
                     if parsed:
                         news_time = parsed
                     elif 'ago' in raw_time.lower() or re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', raw_time, re.I):
                         news_time = raw_time
 
             if news_time == "未知时间":
-                for el in card.find_all(['div', 'span', 'p'], class_=re.compile(r'meta|date|time', re.I)):
+                for el in card.find_all(['div', 'span', 'p', 'time'], class_=meta_class_re):
                     text = el.get_text(' ', strip=True)
                     if text and len(text) < 60:
                         parsed = _parse_american_month_date(text)
                         if not parsed and re.match(r'^[A-Z][a-z]{2,8}\s+\d{1,2}$', text.strip()):
                             fixed = f"{text.strip()}, {datetime.now().year}"
                             parsed = _parse_american_month_date(fixed)
+                        if not parsed:
+                            rel_str, _ = _parse_relative_time_to_absolute(text)
+                            if rel_str:
+                                parsed = rel_str
                         if parsed:
                             news_time = parsed
                             break
                         if re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b', text, re.I):
                             news_time = text
                             break
+
+            if news_time in ("未知时间", ""):
+                row_date = _extract_nottesla_row_date(card)
+                if row_date:
+                    news_time = row_date
+            elif not re.match(r'^\d{4}-\d{2}-\d{2}', news_time):
+                row_date = _extract_nottesla_row_date(card)
+                if row_date:
+                    rel_str, _ = _parse_relative_time_to_absolute(news_time)
+                    if rel_str:
+                        news_time = rel_str
+                    else:
+                        news_time = row_date
 
             summary = ""
             summary_source = card.find(class_=re.compile(r'subhead|subtitle|description|excerpt|summary|lede|dek', re.I))
