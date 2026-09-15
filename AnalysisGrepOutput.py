@@ -6,6 +6,49 @@ from dashscope import Generation
 import dashscope
 from openai import OpenAI
 
+DEFAULT_FALLBACK_MODELS = [
+    'qwen3.7-plus',
+    'qwen-plus',
+    'deepseek-v4-pro',
+]
+
+
+def _is_model_unavailable_error(exc):
+    """判断异常是否属于"模型不可用"类错误，适合触发 fallback 重试。"""
+    msg = str(exc).lower()
+    # openai.BadRequestError / 404 / dashscope SDK 常见错误文本
+    indicators = [
+        'model_not_found',
+        'model does not exist',
+        'do not have access',
+        'the model',
+        'invalid_request_error',
+        'http 404',
+        'http status code: 404',
+        'status_code: 404',
+        'status_code: 400',
+        'not find model',
+        'invalid model',
+        'unknown model',
+        '不存在或',
+        '不存在',
+    ]
+    has_indicator = any(i in msg for i in indicators)
+    # 额外检查是否包含数字 404/400（模型不存在/请求错误）而不是 429（限流）或 5xx（服务端）
+    has_status_4xx = re.search(r'\b(404|400|401|403)\b', msg) is not None
+    return has_indicator or has_status_4xx
+
+
+def _dispatch_model_call(prompt, model, system_message):
+    """根据模型名选择调用路径。"""
+    if model == 'qwen-plus':
+        return call_qwen_plus(prompt, model)
+    if model.startswith('deepseek'):
+        return call_model_via_openai(prompt, model, system_message)
+    if model.startswith('qwen3.') or model.startswith('qwen3-'):
+        return call_model_via_openai(prompt, model, system_message)
+    return call_model_via_openai(prompt, model, system_message)
+
 def parse_news_file(filename):
     """解析新闻文件，提取所有新闻信息"""
     with open(filename, 'r', encoding='utf-8') as f:
@@ -124,7 +167,7 @@ def call_qwen_plus(prompt, model='qwen-plus'):
         raise Exception(f"API调用失败: {response.message}")
 
 def call_model_via_openai(prompt, model, system_message):
-    """通过OpenAI兼容接口调用模型（支持deepseek-v4-pro、qwen3.6-plus等）"""
+    """通过OpenAI兼容接口调用模型（支持deepseek-v4-pro、qwen3.7-plus等）"""
     # 从环境变量获取API密钥
     api_key = os.environ.get('DASHSCOPE_API_KEY')
     if not api_key:
@@ -154,7 +197,7 @@ def call_deepseek_v4_pro(prompt, model='deepseek-v4-pro'):
     return call_model_via_openai(prompt, model, "你是一位专业的行业分析师。")
 
 def call_qwen3_6_plus(prompt, model='qwen3.6-plus'):
-    """调用阿里云百炼的qwen3.6-plus模型"""
+    """调用阿里云百炼的qwen3.7-plus模型"""
     return call_model_via_openai(prompt, model, "你是一位专业的行业分析师。")
 
 def save_markdown_report(content, output_file):
@@ -215,10 +258,10 @@ def main():
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen-plus
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model deepseek-v4-pro
-  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen3.6-plus
+  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen3.7-plus
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --custom-requirement "特别关注华为和小鹏的动态"
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model deepseek-v4-pro --custom-requirement "重点关注激光雷达技术发展"
-  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen3.6-plus --custom-requirement "重点关注激光雷达技术发展"
+  python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --model qwen3.7-plus --custom-requirement "重点关注激光雷达技术发展"
   python AnalysisGrepOutput.py news.txt --prompt-file prompts/weekly_news_summery.md --old-report last_week_report.md
         '''
     )
@@ -227,7 +270,7 @@ def main():
                        help='指定提示词模板文件路径（必填）',
                        required=True)
     parser.add_argument('--model', '-m',
-                       help='指定使用的模型名称（默认: qwen-plus，可选: deepseek-v4-pro, qwen3.6-plus）',
+                       help='指定使用的模型名称（默认: qwen-plus，可选: deepseek-v4-pro, 7-plus）',
                        default='qwen-plus')
     parser.add_argument('--custom-requirement', '-c',
                        help='添加用户定制化要求，用于补充大模型的提示词',
@@ -283,23 +326,47 @@ def main():
     prompt = create_analysis_prompt(news_list, custom_requirement, prompt_template, old_report_content, prompt_file)
 
     # 调用大模型进行分析
-    print(f"正在调用大模型 '{model}' 进行分析...")
-    try:
-        # 根据模型名称选择调用不同的函数
-        # 对于特定模型使用专用函数，其他模型默认使用OpenAI兼容接口
-        if model.startswith('deepseek'):
-            analysis = call_deepseek_v4_pro(prompt, model)
-        elif model.startswith('qwen3.6'):
-            analysis = call_qwen3_6_plus(prompt, model)
-        elif model == 'qwen-plus':
-            analysis = call_qwen_plus(prompt, model)
-        else:
-            # 未知模型默认使用OpenAI兼容接口
-            print(f"提示: 使用OpenAI兼容接口调用模型 '{model}'")
-            analysis = call_model_via_openai(prompt, model, "你是一位专业的行业分析师。")
-    except Exception as e:
-        print(f"分析失败: {str(e)}")
+    primary_model = model
+    fallback_models = []
+    for m in DEFAULT_FALLBACK_MODELS:
+        if m.lower() != primary_model.lower():
+            fallback_models.append(m)
+    try_models = [primary_model] + fallback_models
+    system_message = "你是一位专业的行业分析师。"
+
+    analysis = None
+    last_exc = None
+    used_model = None
+    for idx, try_model in enumerate(try_models, 1):
+        label = "用户指定模型" if idx == 1 else f"回退模型 #{idx - 1}"
+        print(f"[{label}] 正在调用大模型 '{try_model}' 进行分析...")
+        try:
+            analysis = _dispatch_model_call(prompt, try_model, system_message)
+            used_model = try_model
+            break
+        except Exception as e:
+            last_exc = e
+            err_msg = str(e)
+            if _is_model_unavailable_error(e):
+                print(f"⚠️  模型 '{try_model}' 不可用（{err_msg[:160]}）")
+                if idx == len(try_models):
+                    print(f"❌ 已尝试所有回退模型，仍失败：{err_msg}")
+                    last_exc = e
+                else:
+                    print(f"   自动尝试下一个回退模型...")
+                    continue
+            else:
+                # 非"模型不可用"错误（如网络、限流、prompt 过长）不继续回退
+                print(f"❌ 模型 '{try_model}' 调用失败：{err_msg}")
+                last_exc = e
+                break
+
+    if analysis is None or used_model is None:
+        print(f"分析失败: {last_exc}")
         return
+
+    if used_model != primary_model:
+        print(f"✅ 最终使用回退模型 '{used_model}' 完成分析（原请求模型 '{primary_model}' 不可用）")
 
     # 保存报告
     output_file = input_file.replace('.txt', '_analysis.md')
